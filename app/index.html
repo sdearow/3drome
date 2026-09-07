@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rome corridor explorer — road safety proposals in 3D</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%238c3b23'/%3E%3Crect x='7' y='2' width='2' height='12' fill='%23fff'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="vendor/cesium/Widgets/widgets.css" />
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <div id="cesiumContainer"></div>
+
+    <header class="panel panel--head">
+      <p class="eyebrow">Prototype</p>
+      <h1 id="siteName">—</h1>
+      <p id="provenanceNote" class="note"></p>
+      <p id="provenanceDetail" class="note note--dim"></p>
+      <p id="contextStatus" class="status">—</p>
+    </header>
+
+    <section class="panel panel--controls" aria-label="View controls">
+      <button id="modeToggle" type="button" class="btn btn--primary">Showing: proposed</button>
+      <p class="hint">Hold <kbd>E</kbd> to peek at the existing layout.</p>
+      <div class="btn-row">
+        <button id="daylightToggle" type="button" class="btn">Daylight</button>
+        <button id="contextToggle" type="button" class="btn">Context: shown</button>
+      </div>
+      <button id="resetView" type="button" class="btn">Reset view</button>
+    </section>
+
+    <section class="panel panel--schedule" aria-label="What changes">
+      <h2>What changes</h2>
+      <table>
+        <thead>
+          <tr><th scope="col">Item</th><th scope="col">Existing</th><th scope="col">Proposed</th></tr>
+        </thead>
+        <tbody id="scheduleBody"></tbody>
+      </table>
+      <div class="btn-row">
+        <button id="exportGeoJson" type="button" class="btn btn--small">Export GeoJSON</button>
+        <button id="exportCsv" type="button" class="btn btn--small">Export CSV</button>
+      </div>
+    </section>
+
+    <footer class="panel panel--readout">
+      <span class="readout-label">Cursor</span>
+      <span id="readout">—</span>
+    </footer>
+
+    <div id="fatal" class="fatal" hidden></div>
+
+    <script>
+      // Must be set before Cesium.js loads: it resolves workers and assets from here.
+      window.CESIUM_BASE_URL = "vendor/cesium/";
+    </script>
+    <script src="vendor/cesium/Cesium.js"></script>
+    <script type="module">
+      import { config } from "./src/config.js";
+      import { start } from "./src/ui.js";
+
+      start(config).catch((error) => {
+        console.error(error);
+        const el = document.getElementById("fatal");
+        el.hidden = false;
+        el.textContent = `Failed to start: ${error?.message ?? error}`;
+        document.body.dataset.ready = "error";
+      });
+    </script>
+  </body>
+</html>

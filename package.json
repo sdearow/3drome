@@ -1,0 +1,18 @@
+{
+  "name": "3drome",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Explore Rome in 3D and inset proposed road safety changes into it, with an explicit boundary between photorealistic context and measured design geometry.",
+  "type": "module",
+  "scripts": {
+    "setup": "node tools/setup_cesium.mjs",
+    "start": "python3 -m http.server 8000 -d app",
+    "test": "node tests/smoke.mjs"
+  },
+  "dependencies": {
+    "cesium": "^1.145.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

@@ -221,3 +221,18 @@ kbd {
   .panel--head { max-width: calc(100% - 24px); }
   .panel--schedule { display: none; }
 }
+
+/* When the context is off, the status block carries the fix, so it needs room
+   to be read rather than glanced at. */
+.status strong {
+  display: block;
+  font-weight: 650;
+}
+
+.status-fix {
+  display: block;
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.45;
+}

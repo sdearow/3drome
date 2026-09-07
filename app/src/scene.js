@@ -81,10 +81,15 @@ export class Scene {
    */
   async loadContext() {
     if (!this.cfg.view.photorealisticContext) {
-      return { loaded: false, reason: "disabled in configuration" };
+      return { loaded: false, code: "disabled", reason: "Context is switched off in the configuration." };
     }
     if (!this.hasToken) {
-      return { loaded: false, reason: "no Cesium ion token configured" };
+      return {
+        loaded: false,
+        code: "no-token",
+        reason: "No Cesium ion token yet.",
+        fix: "Sign up free at cesium.com/ion, copy your access token, and paste it into view.ionToken in app/src/config.js.",
+      };
     }
 
     try {
@@ -95,7 +100,54 @@ export class Scene {
       return { loaded: true };
     } catch (error) {
       console.error("Photorealistic context failed to load:", error);
-      return { loaded: false, reason: String(error?.message ?? error) };
+      return { ...(await this._diagnose()), detail: String(error?.message ?? error) };
+    }
+  }
+
+  /**
+   * Work out why the context did not load.
+   *
+   * A rejected token and a proxy that blocks the request fail in much the same way
+   * from inside the page, and the two need completely different responses — one is
+   * a copy-paste, the other is a conversation with whoever runs the network. Asking
+   * the ion API directly separates them.
+   */
+  async _diagnose() {
+    const token = this.cfg.view.ionToken;
+    try {
+      const response = await fetch("https://api.cesium.com/v1/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.status === 401 || response.status === 403) {
+        return {
+          loaded: false,
+          code: "token-rejected",
+          reason: "Cesium ion rejected the token.",
+          fix: "Check it was copied whole, and that it has not been revoked or expired.",
+        };
+      }
+      if (!response.ok) {
+        return {
+          loaded: false,
+          code: "ion-error",
+          reason: `Cesium ion answered ${response.status}.`,
+          fix: "Usually temporary. If it persists, check status.cesium.com.",
+        };
+      }
+      // The account is fine, so the tiles themselves are what could not be reached.
+      return {
+        loaded: false,
+        code: "tiles-unreachable",
+        reason: "The account is fine, but the tiles could not be fetched.",
+        fix: "Your network may allow api.cesium.com but block the tile hosts. See docs/NETWORK.md.",
+      };
+    } catch {
+      return {
+        loaded: false,
+        code: "network-blocked",
+        reason: "Could not reach Cesium ion at all.",
+        fix: "A proxy or firewall is almost certainly blocking it. See docs/NETWORK.md for the hosts to allow.",
+      };
     }
   }
 

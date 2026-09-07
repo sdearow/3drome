@@ -29,8 +29,26 @@ export async function start(cfg) {
     status.textContent = "Photorealistic context: on";
     status.dataset.state = "ok";
   } else {
-    status.textContent = `Context off — ${result.reason}. Geometry-only mode.`;
+    // When the context is missing, the panel has to say what to do about it. The
+    // difference between a missing token and a blocked proxy is the difference
+    // between a copy-paste and a conversation with IT, and it is not guessable
+    // from an empty sky.
     status.dataset.state = "warn";
+    status.innerHTML = "";
+
+    const headline = document.createElement("strong");
+    headline.textContent = `Geometry-only mode — ${result.reason}`;
+    status.append(headline);
+
+    if (result.fix) {
+      const fix = document.createElement("span");
+      fix.className = "status-fix";
+      fix.textContent = result.fix;
+      status.append(fix);
+    }
+    if (result.detail) {
+      console.info(`Context diagnosis [${result.code}]: ${result.detail}`);
+    }
   }
 
   document.body.dataset.ready = "true";

@@ -236,3 +236,41 @@ kbd {
   font-size: 11px;
   line-height: 1.45;
 }
+
+/* Token entry, shown in the status panel when the context cannot load for a reason
+   the person at the keyboard can actually fix. */
+.token-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.token-form input {
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.token-form input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.token-message:not(:empty) {
+  display: block;
+  color: var(--warn);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.btn--quiet {
+  color: var(--dim);
+  background: transparent;
+  border-style: dashed;
+}

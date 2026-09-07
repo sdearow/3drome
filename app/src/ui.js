@@ -9,10 +9,15 @@
 import { Scene } from "./scene.js";
 import { carriagewayExtent } from "./elements.js";
 import { crossSectionCsv, download, elementsToGeoJson } from "./export.js";
+import { clearToken, looksLikeIonToken, readStored, resolveIonToken, storeToken } from "./token.js";
 
 const C = window.Cesium;
 
 export async function start(cfg) {
+  // Resolve the token before the scene is built: it decides whether there is a
+  // context to load at all.
+  cfg.view.ionToken = resolveIonToken(cfg);
+
   const scene = new Scene("cesiumContainer", cfg);
   window.__scene = scene; // exposed for the smoke test and console inspection
 
@@ -20,6 +25,7 @@ export async function start(cfg) {
   wireControls(scene, cfg);
   wireReadout(scene);
   wireSchedule(scene, cfg);
+  wireTokenReset();
 
   const status = document.getElementById("contextStatus");
   status.textContent = "Loading photorealistic context…";
@@ -46,6 +52,12 @@ export async function start(cfg) {
       fix.textContent = result.fix;
       status.append(fix);
     }
+    // The two cases a person can actually resolve from here get the input; a blocked
+    // proxy does not, and offering a box to retype a working token into would only
+    // send them round the loop again.
+    if (result.code === "no-token" || result.code === "token-rejected") {
+      status.append(tokenForm());
+    }
     if (result.detail) {
       console.info(`Context diagnosis [${result.code}]: ${result.detail}`);
     }
@@ -53,6 +65,71 @@ export async function start(cfg) {
 
   document.body.dataset.ready = "true";
   return scene;
+}
+
+/**
+ * Paste-a-token form, shown inside the status panel.
+ *
+ * It is here rather than in a config file because a token in a tracked file ends up
+ * in the repository. Stored in the browser, it stays on this machine.
+ */
+function tokenForm() {
+  const form = document.createElement("form");
+  form.className = "token-form";
+
+  const input = document.createElement("input");
+  input.type = "password";
+  input.placeholder = "Paste Cesium ion token";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.setAttribute("aria-label", "Cesium ion access token");
+
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.className = "btn btn--small";
+  button.textContent = "Save and reload";
+
+  const message = document.createElement("span");
+  message.className = "token-message";
+
+  form.append(input, button, message);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const token = input.value.trim();
+
+    if (!token) {
+      message.textContent = "Paste a token first.";
+      return;
+    }
+    if (!looksLikeIonToken(token)) {
+      message.textContent = "That does not look like an ion token — they start with eyJ and have three parts separated by dots. Check the whole thing was copied.";
+      return;
+    }
+    if (!storeToken(token)) {
+      message.textContent = "This browser refused to store it. A private window or a browser policy will do that.";
+      return;
+    }
+    message.textContent = "Saved. Reloading…";
+    window.location.reload();
+  });
+
+  return form;
+}
+
+/** Let someone remove a stored token without opening developer tools. */
+function wireTokenReset() {
+  if (!readStored()) return;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "btn btn--small btn--quiet";
+  button.textContent = "Forget stored token";
+  button.addEventListener("click", () => {
+    clearToken();
+    window.location.reload();
+  });
+  document.querySelector(".panel--controls").append(button);
 }
 
 function wireProvenance(cfg) {

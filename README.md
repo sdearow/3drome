@@ -50,7 +50,13 @@ run in.
 
 For photorealistic context, create a free [Cesium ion](https://cesium.com/ion/) account —
 Google Photorealistic 3D Tiles are included, so no Google Cloud billing account is
-needed — and put the token in `view.ionToken` in `app/src/config.js`.
+needed — then paste the token into the field the status panel offers when no token is
+present. It is kept in the browser on that machine and never written to the repository.
+
+Do **not** put a real token in `app/src/config.js`. That file is tracked by git, so a
+token written there gets committed and pushed, and a pushed credential has to be rotated
+rather than edited out. The field there exists only for pinning a token in an unattended
+deployment.
 
 The Google and Cesium credit line must stay visible when the context is on. It is an
 attribution requirement, not decoration.

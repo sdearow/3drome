@@ -15,16 +15,24 @@ Expected on a fresh checkout. Nothing is broken.
 1. Sign up at <https://cesium.com/ion/> — free, no credit card. Google Photorealistic 3D
    Tiles are included with the account, so you do **not** need a Google Cloud billing
    account.
-2. Open **Access Tokens** in the ion dashboard and copy the default token. It is long and
-   starts with `eyJ`.
-3. Open `app/src/config.js`, find `ionToken: ""` in the `view` block, and paste it
-   between the quotes:
+2. Open **Access Tokens** in the ion dashboard and copy the default token with the copy
+   button. It is long and starts with `eyJ`.
+3. Paste it into the field in the status panel and press **Save and reload**.
 
-   ```js
-   ionToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-   ```
+The token is stored in the browser on that machine. It is never written to a file, so it
+cannot be committed by accident — which is the reason it is not a configuration setting.
+Each person who opens the application enters their own, which is how an access token is
+meant to work.
 
-4. Save and reload the page. Do a hard reload — `Ctrl+F5` — if the panel does not change.
+**Forget stored token** in the controls removes it again.
+
+### Do not put a token in config.js
+
+`app/src/config.js` is tracked by git. A token written there will be committed and pushed
+on the next `git add`, and a credential that has reached a remote has to be rotated in the
+ion dashboard — editing it out of the file afterwards does not help, because it stays in
+the history. The `ionToken` field there exists only for pinning a token deliberately in an
+unattended deployment whose checkout is not shared.
 
 ## "Cesium ion rejected the token"
 

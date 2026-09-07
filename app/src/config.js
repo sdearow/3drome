@@ -141,9 +141,16 @@ export const config = {
   /** Rendering and interaction defaults. */
   view: {
     /**
-     * Cesium ion access token. A free ion account provides Google Photorealistic
-     * 3D Tiles without a separate Google Cloud billing account. Leave empty to run
-     * in geometry-only mode, which needs no token and no network.
+     * Cesium ion access token.
+     *
+     * LEAVE THIS EMPTY. This file is tracked by git, so a token written here will be
+     * committed and pushed, and a pushed credential has to be rotated rather than
+     * edited out. Paste the token into the application instead — the status panel
+     * offers a field for it when no token is present, and it is kept in the browser
+     * on that machine only.
+     *
+     * The field exists for pinning a token deliberately in an unattended or kiosk
+     * deployment, where there is no one to paste it in and the checkout is not shared.
      */
     ionToken: "",
     /** Set true to stream photorealistic context. Requires ionToken. */

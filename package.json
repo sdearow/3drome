@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "setup": "node tools/setup_cesium.mjs",
-    "start": "python3 -m http.server 8000 -d app",
+    "start": "python3 tools/serve.py",
     "test": "node tests/smoke.mjs"
   },
   "dependencies": {

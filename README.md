@@ -24,10 +24,17 @@ Needs Python. Nothing else, and nothing that requires admin rights.
 
 ```bash
 python tools/setup_cesium.py     # downloads CesiumJS into app/vendor/cesium
-python -m http.server 8000 -d app
+python tools/serve.py            # serves it at http://localhost:8000
 ```
 
 Then open <http://localhost:8000>. Use `python3` instead of `python` on Linux and macOS.
+
+`python -m http.server 8000 -d app` also works, but `tools/serve.py` sends `no-store`
+so a reload always gets what is on disk. A cached `index.html` that still points at a
+since-renamed module fails in a way that looks like the whole application is broken, and
+that is a bad hour to spend. It also pins the JavaScript MIME type, which some Windows
+installations otherwise serve as `text/plain` — browsers refuse to execute that as a
+module.
 
 The setup step is a one-off download of about 130 MB, which unpacks to 23 MB. There is a
 Node equivalent, `node tools/setup_cesium.mjs`, if you would rather use it — the result

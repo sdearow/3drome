@@ -1,80 +1,54 @@
 /**
- * Parametric library of road-safety elements.
+ * The catalogue of things that can be placed on a corridor.
  *
- * Each generator takes a spec in corridor coordinates (station, offset, metres) and
- * returns Cesium entity descriptors. The point of generating these rather than
- * modelling them is that every element keeps its dimensions as data: a raised
- * crossing is 4.00 m wide because `width: 4.0` says so, and that number can be read
- * back out into a schedule, a drawing note or a GeoJSON export.
+ * Each entry pairs a geometry generator with a description of its editable fields.
+ * The properties panel is built from that description rather than hand-written per
+ * type, so adding a new kind of intervention means adding one entry here and nothing
+ * else. The fields carry units, ranges and defaults because those are what make an
+ * entered number checkable.
  *
- * Anything that cannot be described this way — a bespoke junction, a piece of street
- * furniture with real form — belongs in Blender and arrives through the `model`
- * generator as a georeferenced glTF.
+ * Dimensions stay data all the way through: a raised crossing is 4.00 m wide because
+ * its `width` field says so, and that number reaches the schedule and the exports
+ * unchanged.
  */
 
 const C = window.Cesium;
 
-/** Palette. Kept muted so the design reads as a proposal drawn over a real place. */
 export const PALETTE = {
   carriageway: C.Color.fromCssColorString("#3a3f45").withAlpha(0.92),
   footway: C.Color.fromCssColorString("#b9b3a7").withAlpha(0.95),
   cycletrack: C.Color.fromCssColorString("#9c4a34").withAlpha(0.95),
   separator: C.Color.fromCssColorString("#d8d3c8"),
   median: C.Color.fromCssColorString("#6f7f5c"),
+  parking: C.Color.fromCssColorString("#6a6f75").withAlpha(0.92),
+  bus: C.Color.fromCssColorString("#7a5230").withAlpha(0.92),
   raisedCrossing: C.Color.fromCssColorString("#c8c2b4"),
   stripe: C.Color.WHITE.withAlpha(0.95),
   planter: C.Color.fromCssColorString("#5f6f4d"),
   planterRim: C.Color.fromCssColorString("#9a9488"),
   bollard: C.Color.fromCssColorString("#e8e3d8"),
-  buildOut: C.Color.fromCssColorString("#b9b3a7").withAlpha(0.95),
+  island: C.Color.fromCssColorString("#c3bdb0"),
   outline: C.Color.BLACK.withAlpha(0.35),
+  selected: C.Color.fromCssColorString("#f0c040"),
 };
 
-/**
- * Outer extent of the carriageway, across however many bands it is split into.
- * A section with a central median has two carriageway bands but one kerb-to-kerb
- * width, and crossings have to span the latter.
- */
-export function carriagewayExtent(section) {
-  const bands = section.filter((b) => b.kind === "carriageway");
-  if (bands.length === 0) return { from: -9, to: 9, width: 18, lanes: 0, laneWidth: 0 };
-  const from = Math.min(...bands.map((b) => b.from));
-  const to = Math.max(...bands.map((b) => b.to));
-  const width = bands.reduce((sum, b) => sum + (b.to - b.from), 0);
-  const lanes = bands.reduce((sum, b) => sum + (b.lanes ?? 0), 0);
-  return { from, to, width, lanes, laneWidth: lanes ? width / lanes : 0 };
-}
+/** The band kinds a cross-section can be built from. */
+export const BAND_KINDS = [
+  { key: "footway", label: "Footway", raised: true },
+  { key: "cycletrack", label: "Cycle track", raised: true },
+  { key: "carriageway", label: "Carriageway", raised: false, lanes: true },
+  { key: "median", label: "Median", raised: true },
+  { key: "separator", label: "Separator", raised: true },
+  { key: "parking", label: "Parking", raised: false },
+  { key: "bus", label: "Bus lane", raised: false },
+];
 
-/**
- * Check that a cross-section tiles its corridor without gaps or overlaps.
- *
- * A gap is not a drawing error, it is a dimension nobody has decided yet, and it
- * will show up later as a figure in a report that does not add up. Failing loudly
- * here is cheaper than reconciling it afterwards.
- */
-export function validateSection(section, label) {
-  const sorted = [...section].sort((a, b) => a.from - b.from);
-  const problems = [];
+export const BAND_KIND_LABEL = Object.fromEntries(BAND_KINDS.map((k) => [k.key, k.label]));
 
-  for (let i = 1; i < sorted.length; i += 1) {
-    const gap = sorted[i].from - sorted[i - 1].to;
-    if (Math.abs(gap) > 1e-6) {
-      problems.push(
-        `${label}: ${gap > 0 ? "gap" : "overlap"} of ${Math.abs(gap).toFixed(2)} m ` +
-          `between "${sorted[i - 1].id}" and "${sorted[i].id}"`,
-      );
-    }
-  }
-  for (const p of problems) console.warn(p);
-  return problems;
-}
+/* --------------------------------------------------------------- primitives */
 
-/**
- * A rectangular slab in corridor coordinates, extruded downwards from `top`.
- * This is the primitive nearly every flat element is built from.
- */
+/** A rectangular slab in corridor coordinates, extruded down from `top`. */
 function slab(frame, { fromStation, toStation, fromOffset, toOffset, top = 0, thickness = 0.02 }) {
-  const base = frame.originHeight + top;
   const corners = [
     frame.toCartesian(fromStation, fromOffset, top),
     frame.toCartesian(toStation, fromOffset, top),
@@ -84,60 +58,63 @@ function slab(frame, { fromStation, toStation, fromOffset, toOffset, top = 0, th
   return {
     hierarchy: new C.PolygonHierarchy(corners),
     perPositionHeight: true,
-    extrudedHeight: base - thickness,
+    extrudedHeight: frame.originHeight + top - thickness,
     closeTop: true,
     closeBottom: true,
   };
 }
 
-/**
- * Continuous surfaces for one cross-section: the deck the design sits on.
- *
- * When photorealistic context is clipped away over the intervention zone this deck
- * is what replaces it, so the proposal is stood on its own measured surface rather
- * than on a photogrammetric mesh whose road width is whatever the camera saw.
- */
-export function crossSectionBands(frame, section, cfg, scenario) {
-  const { treatedFrom, treatedTo } = cfg.corridor;
-  const entities = [];
+/** Outer kerb-to-kerb extent of the carriageway, across however many bands it uses. */
+export function carriagewayExtent(bandsWithOffsets) {
+  const parts = bandsWithOffsets.filter((b) => b.kind === "carriageway");
+  if (parts.length === 0) return { from: -7, to: 7 };
+  return {
+    from: Math.min(...parts.map((b) => b.from)),
+    to: Math.max(...parts.map((b) => b.to)),
+  };
+}
 
-  for (const band of section) {
-    const color = PALETTE[band.kind] ?? PALETTE.carriageway;
-    // Footways and cycle tracks sit on a 0.15 m kerb upstand above the carriageway.
-    const raised = band.kind === "footway" || band.kind === "cycletrack" || band.kind === "median";
+/* ------------------------------------------------------------------ sections */
+
+/** Continuous surfaces for one cross-section: the deck the design stands on. */
+export function crossSectionBands(frame, bandsWithOffsets, corridor, scenario) {
+  const from = corridor.treatedFrom;
+  const to = corridor.treatedTo ?? frame.length;
+  const out = [];
+
+  for (const band of bandsWithOffsets) {
+    const spec = BAND_KINDS.find((k) => k.key === band.kind);
+    const raised = spec?.raised ?? false;
     const top = raised ? 0.15 : 0.0;
 
-    entities.push({
+    out.push({
       id: `${scenario}-band-${band.id}`,
-      name: `${band.kind} (${(band.to - band.from).toFixed(2)} m)`,
+      name: `${BAND_KIND_LABEL[band.kind] ?? band.kind} · ${band.width.toFixed(2)} m`,
       polygon: {
         ...slab(frame, {
-          fromStation: treatedFrom,
-          toStation: treatedTo,
+          fromStation: from,
+          toStation: to,
           fromOffset: band.from,
           toOffset: band.to,
           top,
           thickness: raised ? 0.15 : 0.05,
         }),
-        material: color,
+        material: PALETTE[band.kind] ?? PALETTE.carriageway,
         outline: true,
         outlineColor: PALETTE.outline,
       },
-      properties: { kind: band.kind, widthM: +(band.to - band.from).toFixed(2), ...band },
     });
 
-    // Lane lines, so a narrowed carriageway is visibly narrowed rather than just darker.
-    if (band.kind === "carriageway" && band.lanes > 1) {
-      const usable = band.to - band.from;
-      const laneWidth = usable / band.lanes;
+    if (band.kind === "carriageway" && (band.lanes ?? 0) > 1) {
+      const laneWidth = band.width / band.lanes;
       for (let i = 1; i < band.lanes; i += 1) {
         const at = band.from + laneWidth * i;
-        entities.push({
+        out.push({
           id: `${scenario}-lane-${band.id}-${i}`,
           polygon: {
             ...slab(frame, {
-              fromStation: treatedFrom,
-              toStation: treatedTo,
+              fromStation: from,
+              toStation: to,
               fromOffset: at - 0.06,
               toOffset: at + 0.06,
               top: 0.01,
@@ -145,53 +122,46 @@ export function crossSectionBands(frame, section, cfg, scenario) {
             }),
             material: PALETTE.stripe,
           },
-          properties: { kind: "laneLine", laneWidthM: +laneWidth.toFixed(2) },
         });
       }
     }
   }
-  return entities;
+  return out;
 }
 
-/** A raised pedestrian crossing (plateau rialzato) spanning the carriageway. */
-function raisedCrossing(frame, spec, cfg) {
-  // Span every carriageway band, so a section split by a median still gets a
-  // crossing that reaches kerb to kerb.
-  const { from, to } = carriagewayExtent(cfg.crossSection.proposed);
-  const half = spec.width / 2;
-  const h = spec.height ?? 0.12;
+/* ------------------------------------------------------------------ catalogue */
 
-  const out = [
-    {
-      id: spec.id,
-      name: `Raised crossing ${spec.width.toFixed(2)} m x ${h.toFixed(2)} m rise`,
-      polygon: {
-        ...slab(frame, {
-          fromStation: spec.station - half,
-          toStation: spec.station + half,
-          fromOffset: from,
-          toOffset: to,
-          top: h,
-          thickness: h,
-        }),
-        material: PALETTE.raisedCrossing,
-        outline: true,
-        outlineColor: PALETTE.outline,
-      },
-      properties: { kind: "raisedCrossing", widthM: spec.width, riseM: h, station: spec.station },
+function raisedCrossing(frame, el, ctx) {
+  const { from, to } = carriagewayExtent(ctx.bands);
+  const half = el.width / 2;
+  const h = el.rise;
+
+  const out = [{
+    id: el.id,
+    polygon: {
+      ...slab(frame, {
+        fromStation: el.station - half,
+        toStation: el.station + half,
+        fromOffset: from,
+        toOffset: to,
+        top: h,
+        thickness: h,
+      }),
+      material: PALETTE.raisedCrossing,
+      outline: true,
+      outlineColor: PALETTE.outline,
     },
-  ];
+  }];
 
-  // Zebra markings, laid across the direction of travel.
-  const stripeCount = Math.floor((to - from) / 1.2);
-  for (let i = 0; i < stripeCount; i += 1) {
+  const stripes = Math.floor((to - from) / 1.2);
+  for (let i = 0; i < stripes; i += 1) {
     const o = from + 0.6 + i * 1.2;
     out.push({
-      id: `${spec.id}-stripe-${i}`,
+      id: `${el.id}-s${i}`,
       polygon: {
         ...slab(frame, {
-          fromStation: spec.station - half + 0.3,
-          toStation: spec.station + half - 0.3,
+          fromStation: el.station - half + 0.3,
+          toStation: el.station + half - 0.3,
           fromOffset: o,
           toOffset: o + 0.55,
           top: h + 0.01,
@@ -199,104 +169,115 @@ function raisedCrossing(frame, spec, cfg) {
         }),
         material: PALETTE.stripe,
       },
-      properties: { kind: "marking" },
     });
   }
   return out;
 }
 
-/** A kerb build-out shortening the crossing distance at a crossing point. */
-function kerbBuildOut(frame, spec) {
-  const sign = Math.sign(spec.offset) || 1;
-  return [
-    {
-      id: spec.id,
-      name: `Kerb build-out ${spec.depth.toFixed(2)} m deep`,
-      polygon: {
-        ...slab(frame, {
-          fromStation: spec.station - spec.length / 2,
-          toStation: spec.station + spec.length / 2,
-          fromOffset: spec.offset,
-          toOffset: spec.offset - sign * spec.depth,
-          top: 0.15,
-          thickness: 0.15,
-        }),
-        material: PALETTE.buildOut,
-        outline: true,
-        outlineColor: PALETTE.outline,
-      },
-      properties: {
-        kind: "kerbBuildOut",
-        depthM: spec.depth,
-        lengthM: spec.length,
-        station: spec.station,
-      },
+function refugeIsland(frame, el) {
+  const half = el.width / 2;
+  return [{
+    id: el.id,
+    polygon: {
+      ...slab(frame, {
+        fromStation: el.station - el.length / 2,
+        toStation: el.station + el.length / 2,
+        fromOffset: el.offset - half,
+        toOffset: el.offset + half,
+        top: 0.15,
+        thickness: 0.15,
+      }),
+      material: PALETTE.island,
+      outline: true,
+      outlineColor: PALETTE.outline,
     },
-  ];
+  }];
 }
 
-/** A single vertical bollard. */
-function bollardAt(frame, id, station, offset, height = 0.9, radius = 0.05) {
-  return {
-    id,
-    position: frame.toCartesian(station, offset, height / 2),
-    cylinder: {
-      length: height,
-      topRadius: radius,
-      bottomRadius: radius,
-      material: PALETTE.bollard,
+function kerbBuildOut(frame, el) {
+  const sign = el.offset >= 0 ? 1 : -1;
+  return [{
+    id: el.id,
+    polygon: {
+      ...slab(frame, {
+        fromStation: el.station - el.length / 2,
+        toStation: el.station + el.length / 2,
+        fromOffset: el.offset,
+        toOffset: el.offset - sign * el.depth,
+        top: 0.15,
+        thickness: 0.15,
+      }),
+      material: PALETTE.footway,
+      outline: true,
+      outlineColor: PALETTE.outline,
     },
-    properties: { kind: "bollard", heightM: height, station, offset },
-  };
+  }];
 }
 
-/** A run of segregation kerb with flexible bollards at a fixed spacing. */
-function separatorRun(frame, spec) {
-  const out = [
-    {
-      id: spec.id,
-      name: "Segregation kerb",
-      polygon: {
-        ...slab(frame, {
-          fromStation: spec.fromStation,
-          toStation: spec.toStation,
-          fromOffset: spec.offset - 0.4,
-          toOffset: spec.offset + 0.4,
-          top: 0.12,
-          thickness: 0.12,
-        }),
-        material: PALETTE.separator,
-        outline: true,
-        outlineColor: PALETTE.outline,
-      },
-      properties: {
-        kind: "separator",
-        lengthM: spec.toStation - spec.fromStation,
-        spacingM: spec.spacing,
-      },
+function separatorRun(frame, el) {
+  const out = [{
+    id: el.id,
+    polygon: {
+      ...slab(frame, {
+        fromStation: el.fromStation,
+        toStation: el.toStation,
+        fromOffset: el.offset - el.width / 2,
+        toOffset: el.offset + el.width / 2,
+        top: 0.12,
+        thickness: 0.12,
+      }),
+      material: PALETTE.separator,
+      outline: true,
+      outlineColor: PALETTE.outline,
     },
-  ];
+  }];
 
-  const n = Math.floor((spec.toStation - spec.fromStation) / spec.spacing);
-  for (let i = 0; i <= n; i += 1) {
-    const s = spec.fromStation + i * spec.spacing;
-    out.push(bollardAt(frame, `${spec.id}-b-${i}`, s, spec.offset, 0.9, 0.05));
+  if (el.spacing > 0) {
+    const n = Math.floor(Math.abs(el.toStation - el.fromStation) / el.spacing);
+    const dir = el.toStation >= el.fromStation ? 1 : -1;
+    for (let i = 0; i <= n; i += 1) {
+      const s = el.fromStation + dir * i * el.spacing;
+      out.push({
+        id: `${el.id}-b${i}`,
+        position: frame.toCartesian(s, el.offset, 0.45),
+        cylinder: { length: 0.9, topRadius: 0.05, bottomRadius: 0.05, material: PALETTE.bollard },
+      });
+    }
   }
   return out;
 }
 
-/** A planted median island. */
-function planter(frame, spec) {
-  const half = spec.width / 2;
+function bollardRow(frame, el) {
+  const out = [];
+  const n = Math.floor(Math.abs(el.toStation - el.fromStation) / el.spacing);
+  const dir = el.toStation >= el.fromStation ? 1 : -1;
+  for (let i = 0; i <= n; i += 1) {
+    const s = el.fromStation + dir * i * el.spacing;
+    out.push({
+      id: `${el.id}-b${i}`,
+      position: frame.toCartesian(s, el.offset, el.height / 2),
+      cylinder: {
+        length: el.height,
+        topRadius: el.radius,
+        bottomRadius: el.radius,
+        material: PALETTE.bollard,
+      },
+    });
+  }
+  return out;
+}
+
+function planter(frame, el) {
+  const half = el.width / 2;
   return [
     {
-      id: `${spec.id}-rim`,
+      id: `${el.id}-rim`,
       polygon: {
         ...slab(frame, {
-          fromStation: spec.station - spec.length / 2,
-          toStation: spec.station + spec.length / 2,
-          fromOffset: spec.offset - half,
-          toOffset: spec.offset + half,
+          fromStation: el.station - el.length / 2,
+          toStation: el.station + el.length / 2,
+          fromOffset: el.offset - half,
+          toOffset: el.offset + half,
           top: 0.25,
           thickness: 0.25,
         }),
@@ -304,69 +285,129 @@ function planter(frame, spec) {
         outline: true,
         outlineColor: PALETTE.outline,
       },
-      properties: { kind: "planter", lengthM: spec.length, widthM: spec.width },
     },
     {
-      id: `${spec.id}-fill`,
+      id: `${el.id}-fill`,
       polygon: {
         ...slab(frame, {
-          fromStation: spec.station - spec.length / 2 + 0.15,
-          toStation: spec.station + spec.length / 2 - 0.15,
-          fromOffset: spec.offset - half + 0.15,
-          toOffset: spec.offset + half - 0.15,
+          fromStation: el.station - el.length / 2 + 0.15,
+          toStation: el.station + el.length / 2 - 0.15,
+          fromOffset: el.offset - half + 0.15,
+          toOffset: el.offset + half - 0.15,
           top: 0.45,
           thickness: 0.2,
         }),
         material: PALETTE.planter,
       },
-      properties: { kind: "planting" },
     },
   ];
+}
+
+function model(frame, el) {
+  const position = frame.toCartesian(el.station, el.offset, el.height ?? 0);
+  const hpr = new C.HeadingPitchRoll(frame.heading + C.Math.toRadians(el.heading ?? 0), 0, 0);
+  return [{
+    id: el.id,
+    position,
+    orientation: C.Transforms.headingPitchRollQuaternion(position, hpr),
+    model: { uri: el.url, scale: el.scale ?? 1, minimumPixelSize: 0 },
+  }];
 }
 
 /**
- * A glTF/GLB exported from Blender, anchored at a corridor coordinate and rotated
- * to sit along the road. Author the model around its own origin with +Y forward and
- * in metres, and it lands in the right place with no further alignment.
+ * `placement` says how an element is put down: "point" takes one click, "run" takes
+ * two — a start and an end along the corridor.
  */
-function model(frame, spec) {
-  const position = frame.toCartesian(spec.station, spec.offset, spec.up ?? 0);
-  const hpr = new C.HeadingPitchRoll(
-    frame.heading + C.Math.toRadians(spec.headingOffset ?? 0),
-    0,
-    0,
-  );
-  return [
-    {
-      id: spec.id,
-      name: spec.label ?? spec.id,
-      position,
-      orientation: C.Transforms.headingPitchRollQuaternion(position, hpr),
-      model: {
-        uri: spec.url,
-        scale: spec.scale ?? 1.0,
-        minimumPixelSize: 0,
-      },
-      properties: { kind: "model", source: spec.url, station: spec.station, offset: spec.offset },
-    },
-  ];
+export const CATALOG = {
+  raisedCrossing: {
+    label: "Raised crossing",
+    hint: "Spans the carriageway kerb to kerb. Rise governs the speed effect.",
+    placement: "point",
+    build: raisedCrossing,
+    fields: [
+      { key: "width", label: "Width", unit: "m", value: 4.0, min: 2, max: 15, step: 0.1 },
+      { key: "rise", label: "Rise", unit: "m", value: 0.12, min: 0.05, max: 0.2, step: 0.01 },
+    ],
+  },
+  refugeIsland: {
+    label: "Refuge island",
+    hint: "Splits a crossing into two stages.",
+    placement: "point",
+    build: refugeIsland,
+    fields: [
+      { key: "length", label: "Length", unit: "m", value: 6.0, min: 2, max: 40, step: 0.5 },
+      { key: "width", label: "Width", unit: "m", value: 2.0, min: 1.2, max: 6, step: 0.1 },
+    ],
+  },
+  kerbBuildOut: {
+    label: "Kerb build-out",
+    hint: "Extends the footway into the carriageway, shortening the crossing.",
+    placement: "point",
+    build: kerbBuildOut,
+    fields: [
+      { key: "length", label: "Length", unit: "m", value: 12.0, min: 2, max: 60, step: 0.5 },
+      { key: "depth", label: "Depth", unit: "m", value: 2.2, min: 0.5, max: 6, step: 0.1 },
+    ],
+  },
+  separatorRun: {
+    label: "Segregation kerb",
+    hint: "Continuous kerb with bollards. Set spacing to 0 for kerb only.",
+    placement: "run",
+    build: separatorRun,
+    fields: [
+      { key: "width", label: "Kerb width", unit: "m", value: 0.8, min: 0.2, max: 3, step: 0.1 },
+      { key: "spacing", label: "Bollard spacing", unit: "m", value: 12, min: 0, max: 50, step: 1 },
+    ],
+  },
+  bollardRow: {
+    label: "Bollard row",
+    hint: "Vertical deterrent without a kerb.",
+    placement: "run",
+    build: bollardRow,
+    fields: [
+      { key: "spacing", label: "Spacing", unit: "m", value: 1.5, min: 0.5, max: 20, step: 0.1 },
+      { key: "height", label: "Height", unit: "m", value: 0.9, min: 0.4, max: 1.5, step: 0.05 },
+      { key: "radius", label: "Radius", unit: "m", value: 0.05, min: 0.02, max: 0.3, step: 0.01 },
+    ],
+  },
+  planter: {
+    label: "Planter",
+    hint: "Planted build-out or median planting.",
+    placement: "point",
+    build: planter,
+    fields: [
+      { key: "length", label: "Length", unit: "m", value: 6.0, min: 1, max: 40, step: 0.5 },
+      { key: "width", label: "Width", unit: "m", value: 1.5, min: 0.5, max: 8, step: 0.1 },
+    ],
+  },
+  model: {
+    label: "Blender model",
+    hint: "A .glb authored in metres, origin on the ground, +Y forward.",
+    placement: "point",
+    build: model,
+    fields: [
+      { key: "url", label: "File", type: "text", value: "assets/models/example.glb" },
+      { key: "scale", label: "Scale", unit: "x", value: 1, min: 0.01, max: 100, step: 0.01 },
+      { key: "heading", label: "Rotation", unit: "°", value: 0, min: -180, max: 180, step: 1 },
+      { key: "height", label: "Raise", unit: "m", value: 0, min: -5, max: 20, step: 0.1 },
+    ],
+  },
+};
+
+/** A new element of the given type, with its catalogue defaults filled in. */
+export function makeElement(type, id, placement) {
+  const entry = CATALOG[type];
+  const element = { id, type, ...placement };
+  for (const field of entry.fields) element[field.key] = field.value;
+  return element;
 }
 
-const GENERATORS = { raisedCrossing, kerbBuildOut, separatorRun, planter, model };
-
-/** Build every enabled element in the configuration. */
-export function buildElements(frame, cfg) {
-  const out = [];
-  for (const spec of cfg.elements) {
-    if (spec.enabled === false) continue;
-    const gen = GENERATORS[spec.type];
-    if (!gen) {
-      console.warn(`Unknown element type "${spec.type}" for "${spec.id}" — skipped.`);
-      continue;
-    }
-    out.push(...gen(frame, spec, cfg));
+/** Build the Cesium descriptors for one element. */
+export function buildElement(frame, element, ctx) {
+  const entry = CATALOG[element.type];
+  if (!entry) {
+    console.warn(`Unknown element type "${element.type}"`);
+    return [];
   }
-  return out;
+  return entry.build(frame, element, ctx);
 }
-
-export const elementTypes = Object.keys(GENERATORS);

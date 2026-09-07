@@ -1,40 +1,32 @@
 /**
  * Scene assembly.
  *
- * The scene is built in two zones with deliberately different accuracy claims:
+ * Two zones with deliberately different accuracy claims: streamed photorealistic
+ * tiles for context, and an intervention zone where those tiles are clipped away and
+ * replaced by geometry the user authored. Keeping that boundary explicit, and visible
+ * in the interface, is the point of the application.
  *
- *   Context zone      streamed photorealistic 3D tiles. Legible, recognisable, and
- *                     dimensionally unwarranted — it is a photogrammetric mesh, not
- *                     a survey. Nothing is measured off it.
- *
- *   Intervention zone the tiles are clipped away and replaced by geometry built from
- *                     the configured cross-section. Every dimension here is a number
- *                     someone chose and can defend.
- *
- * Keeping the boundary between the two explicit, and visible in the interface, is
- * the point of the whole application.
+ * The scene is rebuilt from the project whenever the design changes. Rebuilding
+ * wholesale rather than patching individual entities keeps one description of the
+ * design — the project — instead of a model and a scene that can disagree.
  */
 
 import { CorridorFrame } from "./geo.js";
-import { buildElements, crossSectionBands, PALETTE, validateSection } from "./elements.js";
+import { buildElement, crossSectionBands, PALETTE } from "./elements.js";
+import { bandOffsets } from "./project.js";
 
 const C = window.Cesium;
 
 export class Scene {
-  constructor(containerId, cfg) {
-    this.cfg = cfg;
-    this.frame = new CorridorFrame(
-      cfg.corridor.axis.start,
-      cfg.corridor.axis.end,
-      cfg.corridor.originHeight,
-    );
-
-    this.hasToken = Boolean(cfg.view.ionToken);
-    if (this.hasToken) C.Ion.defaultAccessToken = cfg.view.ionToken;
+  constructor(containerId, settings) {
+    this.settings = settings;
+    this.frame = null;
+    this.project = null;
+    this.mode = "proposed";
+    this.contextTileset = null;
+    this.selectedId = null;
 
     this.viewer = new C.Viewer(containerId, {
-      // Without a token there is no ion imagery or terrain to fall back on, so the
-      // scene is built explicitly rather than relying on Cesium's defaults.
       baseLayer: false,
       baseLayerPicker: false,
       terrainProvider: new C.EllipsoidTerrainProvider(),
@@ -56,64 +48,45 @@ export class Scene {
     scene.skyAtmosphere.show = true;
     scene.fog.enabled = true;
     scene.highDynamicRange = false;
-    this.viewer.cesiumWidget.creditContainer.style.display = "";
-
     clock.shouldAnimate = false;
 
-    this.entities = { existing: [], proposed: [] };
-    this.mode = "proposed";
-    this.contextTileset = null;
+    // Design entities are kept in their own collections so a rebuild can clear them
+    // without disturbing anything the editor draws on top.
+    this.design = new C.CustomDataSource("design");
+    this.overlay = new C.CustomDataSource("overlay");
+    this.viewer.dataSources.add(this.design);
+    this.viewer.dataSources.add(this.overlay);
 
-    this._buildInterventionZone();
+    this.entities = { existing: [], proposed: [] };
     this._setDaylight("day");
-    this.setMode("proposed");
-    this.resetCamera();
   }
 
   /* ------------------------------------------------------------------ context */
 
-  /**
-   * Stream photorealistic tiles and cut the intervention zone out of them.
-   *
-   * The clip is what makes the two zones coexist: without it the proposal would be
-   * drawn on top of a photogrammetric road surface that is still visibly there,
-   * with the old kerb lines showing through the new ones.
-   */
-  async loadContext() {
-    if (!this.cfg.view.photorealisticContext) {
-      return { loaded: false, code: "disabled", reason: "Context is switched off in the configuration." };
-    }
-    if (!this.hasToken) {
+  async loadContext(token) {
+    if (!token) {
       return {
         loaded: false,
         code: "no-token",
         reason: "No Cesium ion token yet.",
-        fix: "Sign up free at cesium.com/ion, copy your access token, and paste it into view.ionToken in app/src/config.js.",
+        fix: "Sign up free at cesium.com/ion, copy your access token, and paste it below.",
       };
     }
+    C.Ion.defaultAccessToken = token;
 
     try {
       const tileset = await C.createGooglePhotorealistic3DTileset();
-      tileset.clippingPolygons = this._clippingPolygons();
       this.viewer.scene.primitives.add(tileset);
       this.contextTileset = tileset;
+      this.applyClipping();
       return { loaded: true };
     } catch (error) {
       console.error("Photorealistic context failed to load:", error);
-      return { ...(await this._diagnose()), detail: String(error?.message ?? error) };
+      return { ...(await this._diagnose(token)), detail: String(error?.message ?? error) };
     }
   }
 
-  /**
-   * Work out why the context did not load.
-   *
-   * A rejected token and a proxy that blocks the request fail in much the same way
-   * from inside the page, and the two need completely different responses — one is
-   * a copy-paste, the other is a conversation with whoever runs the network. Asking
-   * the ion API directly separates them.
-   */
-  async _diagnose() {
-    const token = this.cfg.view.ionToken;
+  async _diagnose(token) {
     try {
       const response = await fetch("https://api.cesium.com/v1/me", {
         headers: { Authorization: `Bearer ${token}` },
@@ -123,7 +96,7 @@ export class Scene {
           loaded: false,
           code: "token-rejected",
           reason: "Cesium ion rejected the token.",
-          fix: "Check it was copied whole, and that it has not been revoked or expired.",
+          fix: "Check it was copied whole, and that it has not been revoked.",
         };
       }
       if (!response.ok) {
@@ -134,7 +107,6 @@ export class Scene {
           fix: "Usually temporary. If it persists, check status.cesium.com.",
         };
       }
-      // The account is fine, so the tiles themselves are what could not be reached.
       return {
         loaded: false,
         code: "tiles-unreachable",
@@ -146,70 +118,105 @@ export class Scene {
         loaded: false,
         code: "network-blocked",
         reason: "Could not reach Cesium ion at all.",
-        fix: "A proxy or firewall is almost certainly blocking it. See docs/NETWORK.md for the hosts to allow.",
+        fix: "A proxy or firewall is blocking it. See docs/NETWORK.md for the hosts to allow.",
       };
     }
   }
 
-  _clippingPolygons() {
-    const { halfWidth, treatedFrom, treatedTo } = this.cfg.corridor;
-    // A small margin beyond the treated length so the cut edge is hidden under the
-    // design deck rather than landing exactly on it.
-    const ring = this.frame.boundaryDegrees(halfWidth, treatedFrom - 6, treatedTo + 6);
-    return new C.ClippingPolygonCollection({
-      polygons: [
-        new C.ClippingPolygon({ positions: C.Cartesian3.fromDegreesArray(ring) }),
-      ],
+  /** Cut the intervention zone out of the context, or restore it when there is none. */
+  applyClipping() {
+    if (!this.contextTileset) return;
+
+    if (!this.frame || !this.project?.corridor) {
+      this.contextTileset.clippingPolygons = undefined;
+      return;
+    }
+    const { corridor } = this.project;
+    const to = corridor.treatedTo ?? this.frame.length;
+    const ring = this.frame.boundaryDegrees(
+      corridor.halfWidth,
+      corridor.treatedFrom - 6,
+      to + 6,
+    );
+    this.contextTileset.clippingPolygons = new C.ClippingPolygonCollection({
+      polygons: [new C.ClippingPolygon({ positions: C.Cartesian3.fromDegreesArray(ring) })],
     });
   }
 
-  /* -------------------------------------------------------- intervention zone */
+  setContextVisible(visible) {
+    if (this.contextTileset) this.contextTileset.show = visible;
+  }
 
-  _buildInterventionZone() {
-    const { cfg, frame, viewer } = this;
+  /* -------------------------------------------------------------------- design */
 
-    this.sectionProblems = [
-      ...validateSection(cfg.crossSection.existing, "existing section"),
-      ...validateSection(cfg.crossSection.proposed, "proposed section"),
-    ];
+  /** Adopt a project and draw it. Called on load and after every edit. */
+  setProject(project) {
+    this.project = project;
+    this.frame = project.corridor
+      ? new CorridorFrame(
+          project.corridor.start,
+          project.corridor.end,
+          project.corridor.originHeight,
+        )
+      : null;
+    this.rebuild();
+    this.applyClipping();
+  }
+
+  rebuild() {
+    this.design.entities.removeAll();
+    this.entities = { existing: [], proposed: [] };
+
+    const { project, frame } = this;
+    if (!project || !frame || !project.corridor) return;
 
     const add = (descriptors, bucket) => {
       for (const d of descriptors) {
-        const entity = viewer.entities.add({ ...d, show: false });
-        this.entities[bucket].push(entity);
+        this.entities[bucket].push(this.design.entities.add({ ...d, show: false }));
       }
     };
 
-    add(crossSectionBands(frame, cfg.crossSection.existing, cfg, "existing"), "existing");
-    add(crossSectionBands(frame, cfg.crossSection.proposed, cfg, "proposed"), "proposed");
-    add(buildElements(frame, cfg), "proposed");
+    const existingBands = bandOffsets(project.sections.existing);
+    const proposedBands = bandOffsets(project.sections.proposed);
 
-    // Outline of the intervention zone, always visible, so the boundary of the
-    // measured area is never ambiguous.
-    const ring = frame.boundaryDegrees(
-      cfg.corridor.halfWidth,
-      cfg.corridor.treatedFrom - 6,
-      cfg.corridor.treatedTo + 6,
-    );
-    this.zoneOutline = viewer.entities.add({
+    add(crossSectionBands(frame, existingBands, project.corridor, "existing"), "existing");
+    add(crossSectionBands(frame, proposedBands, project.corridor, "proposed"), "proposed");
+
+    // Elements belong to the proposal: they are what is being added.
+    const ctx = { bands: proposedBands, corridor: project.corridor };
+    for (const element of project.elements) {
+      const descriptors = buildElement(frame, element, ctx).map((d) => ({
+        ...d,
+        properties: { elementId: element.id },
+      }));
+      add(descriptors, "proposed");
+    }
+
+    this._drawZoneOutline();
+    this.setMode(this.mode);
+    this.highlight(this.selectedId);
+  }
+
+  _drawZoneOutline() {
+    const { corridor } = this.project;
+    const to = corridor.treatedTo ?? this.frame.length;
+    const ring = this.frame.boundaryDegrees(corridor.halfWidth, corridor.treatedFrom - 6, to + 6);
+    const positions = [];
+    for (let i = 0; i < ring.length; i += 2) {
+      positions.push(ring[i], ring[i + 1], this.frame.originHeight + 0.6);
+    }
+    this.design.entities.add({
       id: "intervention-zone",
-      name: "Intervention zone",
       polyline: {
-        positions: C.Cartesian3.fromDegreesArrayHeights(
-          ringWithHeight(ring, cfg.corridor.originHeight + 0.6),
-        ),
+        positions: C.Cartesian3.fromDegreesArrayHeights(positions),
         width: 2,
         material: new C.PolylineDashMaterialProperty({
           color: C.Color.fromCssColorString("#f0c040"),
         }),
-        clampToGround: false,
       },
     });
   }
 
-  /* ------------------------------------------------------------------ controls */
-
-  /** Switch between the existing and the proposed cross-section. */
   setMode(mode) {
     this.mode = mode;
     for (const e of this.entities.existing) e.show = mode === "existing";
@@ -221,27 +228,40 @@ export class Scene {
     return this.mode;
   }
 
-  /**
-   * Day and night. This drives the sun position, which is what actually matters for
-   * a safety proposal: night is when lighting and conspicuity are argued about, so
-   * it is a working view rather than a presentation flourish.
-   */
+  /** Outline whichever entities belong to the selected element. */
+  highlight(elementId) {
+    this.selectedId = elementId;
+    for (const entity of this.design.entities.values) {
+      const owner = entity.properties?.elementId?.getValue?.();
+      const selected = Boolean(elementId) && owner === elementId;
+      if (entity.polygon) {
+        entity.polygon.outlineColor = selected ? PALETTE.selected : PALETTE.outline;
+        entity.polygon.outlineWidth = selected ? 3 : 1;
+      }
+      if (entity.cylinder) {
+        entity.cylinder.material = selected ? PALETTE.selected : PALETTE.bollard;
+      }
+    }
+  }
+
+  /** The element id under a screen position, if any. */
+  pickElementId(windowPosition) {
+    const picked = this.viewer.scene.pick(windowPosition);
+    return picked?.id?.properties?.elementId?.getValue?.() ?? null;
+  }
+
+  /* ------------------------------------------------------------------ controls */
+
   _setDaylight(which) {
     const hour = which === "night"
-      ? this.cfg.view.daylight.nightHour
-      : this.cfg.view.daylight.dayHour;
-    // Rome is UTC+2 in summer time; the demonstration uses a fixed midsummer date.
+      ? this.settings.daylight.nightHour
+      : this.settings.daylight.dayHour;
     const iso = `2026-06-21T${String(hour - 2).padStart(2, "0")}:00:00Z`;
     this.viewer.clock.currentTime = C.JulianDate.fromIso8601(iso);
     this.daylight = which;
-
-    const night = which === "night";
-    this.viewer.scene.globe.baseColor = C.Color.fromCssColorString(night ? "#14171a" : "#2b2f33");
-    if (this.contextTileset) {
-      this.contextTileset.imageBasedLighting.imageBasedLightingFactor = night
-        ? new C.Cartesian2(0.2, 0.2)
-        : new C.Cartesian2(1.0, 1.0);
-    }
+    this.viewer.scene.globe.baseColor = C.Color.fromCssColorString(
+      which === "night" ? "#14171a" : "#2b2f33",
+    );
   }
 
   toggleDaylight() {
@@ -249,58 +269,54 @@ export class Scene {
     return this.daylight;
   }
 
-  /** Show or hide the photorealistic context without unloading it. */
-  setContextVisible(visible) {
-    if (this.contextTileset) this.contextTileset.show = visible;
-  }
-
-  /**
-   * Frame the treated length obliquely.
-   *
-   * The framing is derived from the corridor rather than stored as absolute angles,
-   * so moving the study to another street — or lengthening this one — still opens on
-   * a usable view instead of pointing at empty ground.
-   */
+  /** Frame the corridor obliquely, derived from its own length. */
   resetCamera() {
-    const { treatedFrom, treatedTo } = this.cfg.corridor;
-    const c = this.cfg.view.camera;
-    const midpoint = this.frame.toCartesian((treatedFrom + treatedTo) / 2, 0, 0);
-    const treatedLength = treatedTo - treatedFrom;
+    if (!this.frame || !this.project?.corridor) return false;
+    const { corridor } = this.project;
+    const to = corridor.treatedTo ?? this.frame.length;
+    const midpoint = this.frame.toCartesian((corridor.treatedFrom + to) / 2, 0, 0);
+    const length = Math.max(to - corridor.treatedFrom, 30);
+    const cam = this.settings.camera;
 
     this.viewer.camera.lookAt(
       midpoint,
       new C.HeadingPitchRange(
-        this.frame.heading + C.Math.toRadians(c.skewDeg),
-        C.Math.toRadians(c.pitchDeg),
-        treatedLength * c.rangeFactor,
+        this.frame.heading + C.Math.toRadians(cam.skewDeg),
+        C.Math.toRadians(cam.pitchDeg),
+        length * cam.rangeFactor,
       ),
     );
-    // Release the lookAt reference frame so the user keeps free navigation.
     this.viewer.camera.lookAtTransform(C.Matrix4.IDENTITY);
+    return true;
+  }
+
+  /** Fly to a geodetic point, used when a project is opened or a place searched. */
+  flyToPoint(longitude, latitude, height = 400) {
+    this.viewer.camera.flyTo({
+      destination: C.Cartesian3.fromDegrees(longitude, latitude, height),
+      orientation: { heading: 0, pitch: C.Math.toRadians(-45), roll: 0 },
+      duration: 1.5,
+    });
   }
 
   /**
-   * Report the corridor coordinate under a screen position. Click-to-place and the
-   * cursor readout both use this, so a user reads chainage and offset rather than a
-   * decimal coordinate they would have to convert before it meant anything.
+   * The ground point under a screen position.
+   * Picks against rendered geometry first, so a click lands on the photorealistic
+   * surface at its real height rather than on the ellipsoid far below it.
    */
-  pickCorridorCoordinate(windowPosition) {
+  pickGround(windowPosition) {
     const scene = this.viewer.scene;
-    const cartesian = scene.pickPosition
-      ? scene.pickPosition(windowPosition)
-      : undefined;
-    const fallback = cartesian ?? this.viewer.camera.pickEllipsoid(windowPosition);
-    if (!C.defined(fallback)) return null;
-    return this.frame.fromCartesian(fallback);
+    const picked = scene.pickPosition(windowPosition);
+    if (C.defined(picked)) return picked;
+    return this.viewer.camera.pickEllipsoid(windowPosition) ?? null;
+  }
+
+  /** Corridor coordinates under a screen position, once an axis exists. */
+  pickCorridorCoordinate(windowPosition) {
+    if (!this.frame) return null;
+    const point = this.pickGround(windowPosition);
+    return point ? this.frame.fromCartesian(point) : null;
   }
 }
 
-/** Interleave a flat [lon, lat, ...] ring with a constant height. */
-function ringWithHeight(ring, height) {
-  const out = [];
-  for (let i = 0; i < ring.length; i += 2) out.push(ring[i], ring[i + 1], height);
-  return out;
-}
-
-export { PALETTE };
 export default Scene;

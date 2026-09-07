@@ -2,107 +2,106 @@
  * Handing the design back to the tools it has to survive in.
  *
  * A 3D view is where a proposal is discussed; it is not where it is checked. These
- * exports exist so the same numbers can be opened in QGIS and in a spreadsheet
- * without being retyped, which is the only way the figures quoted in a report stay
- * reconciled with the figures in the scene.
+ * exports exist so the same numbers open in QGIS and in a spreadsheet without being
+ * retyped, which is the only way figures quoted in a report stay reconciled with what
+ * is on screen.
  */
 
-/**
- * Placed elements as GeoJSON in EPSG:4326, one feature per element, carrying its
- * corridor coordinate and its dimensions as properties.
- */
-export function elementsToGeoJson(frame, cfg) {
-  const features = [];
+import { CATALOG } from "./elements.js";
+import { bandOffsets, sectionWidth } from "./project.js";
 
-  for (const spec of cfg.elements) {
-    if (spec.enabled === false) continue;
+/** Placed elements as GeoJSON in EPSG:4326, one feature each, dimensions attached. */
+export function elementsToGeoJson(frame, project) {
+  const features = project.elements.map((element) => {
+    const entry = CATALOG[element.type];
+    const run = entry?.placement === "run";
+    const station = run ? (element.fromStation + element.toStation) / 2 : element.station;
+    const point = frame.toDegrees(station, element.offset ?? 0);
 
-    const station = spec.station ?? (spec.fromStation + spec.toStation) / 2;
-    const offset = spec.offset ?? 0;
-    const p = frame.toDegrees(station, offset);
+    const properties = {
+      id: element.id,
+      type: element.type,
+      label: entry?.label ?? element.type,
+      station_m: round(station),
+      offset_m: round(element.offset ?? 0),
+    };
+    if (run) {
+      properties.from_station_m = round(element.fromStation);
+      properties.to_station_m = round(element.toStation);
+      properties.length_m = round(Math.abs(element.toStation - element.fromStation));
+    }
+    for (const field of entry?.fields ?? []) {
+      properties[field.unit === "m" ? `${field.key}_m` : field.key] = element[field.key];
+    }
 
-    features.push({
+    return {
       type: "Feature",
-      geometry: {
-        type: "Point",
-        coordinates: [+p.longitude.toFixed(8), +p.latitude.toFixed(8)],
-      },
-      properties: {
-        id: spec.id,
-        type: spec.type,
-        station_m: +station.toFixed(2),
-        offset_m: +offset.toFixed(2),
-        ...dimensionsOf(spec),
-      },
-    });
-  }
+      geometry: { type: "Point", coordinates: [round(point.longitude, 8), round(point.latitude, 8)] },
+      properties,
+    };
+  });
+
+  const axis = {
+    type: "Feature",
+    geometry: {
+      type: "LineString",
+      coordinates: [
+        [round(project.corridor.start.longitude, 8), round(project.corridor.start.latitude, 8)],
+        [round(project.corridor.end.longitude, 8), round(project.corridor.end.latitude, 8)],
+      ],
+    },
+    properties: { id: "corridor-axis", type: "axis", length_m: round(frame.length) },
+  };
 
   return {
     type: "FeatureCollection",
-    name: cfg.corridor.name,
+    name: project.name,
     crs: { type: "name", properties: { name: "urn:ogc:def:crs:OGC:1.3:CRS84" } },
     metadata: {
-      status: cfg.provenance.status,
-      axisSource: cfg.provenance.axisSource,
-      sectionSource: cfg.provenance.sectionSource,
-      note: cfg.provenance.note,
-      workingCrs: cfg.crs.workingCrs,
+      ...project.provenance,
+      corridorLength_m: round(frame.length),
       generated: new Date().toISOString(),
     },
-    features,
+    features: [axis, ...features],
   };
 }
 
-function dimensionsOf(spec) {
-  const keys = ["width", "height", "length", "depth", "spacing", "scale", "url"];
-  const out = {};
-  for (const k of keys) if (spec[k] !== undefined) out[`${k}_m`] = spec[k];
-  if (spec.url) {
-    delete out.url_m;
-    out.model_uri = spec.url;
-  }
-  return out;
-}
+/** The cross-section as a comparison table, generated from the widths being drawn. */
+export function crossSectionCsv(project) {
+  const rows = [["scenario", "order", "band_id", "kind", "from_m", "to_m", "width_m", "lanes", "lane_width_m"]];
 
-/**
- * The cross-section as a comparison table: existing against proposed, band by band.
- * This is the artefact a reviewer actually argues with, so it is generated from the
- * same configuration the scene is drawn from rather than maintained alongside it.
- */
-export function crossSectionCsv(cfg) {
-  const rows = [["scenario", "band_id", "kind", "from_m", "to_m", "width_m", "lanes", "lane_width_m"]];
-
-  const emit = (scenario, bands) => {
-    for (const b of bands) {
-      const width = b.to - b.from;
+  for (const scenario of ["existing", "proposed"]) {
+    bandOffsets(project.sections[scenario]).forEach((band, index) => {
       rows.push([
         scenario,
-        b.id,
-        b.kind,
-        b.from.toFixed(2),
-        b.to.toFixed(2),
-        width.toFixed(2),
-        b.lanes ?? "",
-        b.lanes ? (width / b.lanes).toFixed(2) : "",
+        index + 1,
+        band.id,
+        band.kind,
+        band.from.toFixed(2),
+        band.to.toFixed(2),
+        band.width.toFixed(2),
+        band.lanes ?? "",
+        band.lanes ? (band.width / band.lanes).toFixed(2) : "",
       ]);
-    }
-  };
-
-  emit("existing", cfg.crossSection.existing);
-  emit("proposed", cfg.crossSection.proposed);
-
+    });
+    rows.push([scenario, "", "TOTAL", "", "", "", sectionWidth(project.sections[scenario]).toFixed(2), "", ""]);
+  }
   return rows.map((r) => r.join(",")).join("\n");
 }
 
-/** Trigger a download of a generated file. */
 export function download(filename, content, mime = "application/json") {
   const blob = new Blob([content], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
-  document.body.appendChild(a);
+  document.body.append(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+function round(value, places = 2) {
+  const f = 10 ** places;
+  return Math.round(value * f) / f;
 }

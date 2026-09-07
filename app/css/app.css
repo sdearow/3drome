@@ -2,12 +2,13 @@
 
 :root {
   --ink: #12151a;
-  --paper: rgba(250, 249, 246, 0.94);
+  --paper: rgba(250, 249, 246, 0.95);
   --line: rgba(18, 21, 26, 0.14);
   --dim: rgba(18, 21, 26, 0.62);
   --accent: #8c3b23;
   --warn: #8a6414;
   --ok: #2f6141;
+  --danger: #9a2f22;
   --radius: 6px;
   --shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
 }
@@ -23,10 +24,7 @@ html, body {
   background: #1b1e22;
 }
 
-#cesiumContainer {
-  position: absolute;
-  inset: 0;
-}
+#cesiumContainer { position: absolute; inset: 0; }
 
 .panel {
   position: absolute;
@@ -35,42 +33,56 @@ html, body {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 12px 14px;
   backdrop-filter: blur(6px);
 }
 
-.panel--head {
+.panel--left,
+.panel--right {
   top: 12px;
-  left: 12px;
-  max-width: 340px;
+  bottom: 12px;
+  width: 262px;
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.eyebrow {
-  margin: 0 0 4px;
+.panel--left { left: 12px; }
+.panel--right { right: 12px; }
+
+.block { display: flex; flex-direction: column; gap: 7px; }
+
+.block h2 {
+  margin: 0;
   font-size: 10px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--dim);
   font-weight: 700;
 }
 
-.panel--head h1 {
-  margin: 0 0 6px;
-  font-size: 16px;
-  line-height: 1.25;
+.panel-head { display: flex; flex-direction: column; gap: 6px; }
+
+.project-name {
+  width: 100%;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 14px;
   font-weight: 650;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
 }
 
-.note {
-  margin: 0 0 4px;
-  color: var(--dim);
-  font-size: 12px;
-}
+.project-name:hover { border-color: var(--line); }
+.project-name:focus { background: #fff; border-color: var(--accent); outline: none; }
 
-.note--dim { font-size: 11px; opacity: 0.85; }
+.muted { margin: 0; color: var(--dim); font-size: 11.5px; }
 
 .status {
-  margin: 8px 0 0;
+  margin: 0;
   padding-top: 8px;
   border-top: 1px solid var(--line);
   font-size: 11px;
@@ -79,15 +91,17 @@ html, body {
 
 .status[data-state="ok"] { color: var(--ok); }
 .status[data-state="warn"] { color: var(--warn); }
+.status strong { display: block; font-weight: 650; }
 
-.panel--controls {
-  top: 12px;
-  right: 12px;
-  width: 208px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.status-fix {
+  display: block;
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.45;
 }
+
+/* ------------------------------------------------------------------- buttons */
 
 .btn {
   appearance: none;
@@ -96,36 +110,43 @@ html, body {
   font: inherit;
   font-size: 12px;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.75);
   border: 1px solid var(--line);
   border-radius: 5px;
   cursor: pointer;
   text-align: center;
 }
 
-.btn:hover { background: #fff; }
+.btn:hover:not(:disabled) { background: #fff; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.btn--primary {
-  font-weight: 650;
-  color: #fff;
-  background: var(--accent);
-  border-color: transparent;
-}
-
-.btn--primary:hover { background: #a04629; }
+.btn--primary { font-weight: 650; color: #fff; background: var(--accent); border-color: transparent; }
+.btn--primary:hover:not(:disabled) { background: #a04629; }
 .btn--primary[data-state="existing"] { background: #4a5259; }
-.btn--primary[data-state="existing"]:hover { background: #59626a; }
+
+.btn--small { font-size: 11px; padding: 5px 8px; }
+.btn--quiet { color: var(--dim); background: transparent; border-style: dashed; }
+.btn--danger { color: #fff; background: var(--danger); border-color: transparent; width: auto; }
 
 .btn-row { display: flex; gap: 6px; }
-.btn--small { font-size: 11px; padding: 5px 8px; }
 
-.hint {
-  margin: -2px 0 0;
-  font-size: 11px;
+.btn-icon {
+  flex: 0 0 auto;
+  width: 22px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
   color: var(--dim);
-  text-align: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
 }
+
+.btn-icon:hover { color: var(--danger); border-color: var(--line); }
+
+.hint { margin: 0; font-size: 11px; color: var(--dim); text-align: center; }
 
 kbd {
   font: inherit;
@@ -137,54 +158,129 @@ kbd {
   background: #fff;
 }
 
-.panel--schedule {
-  right: 12px;
-  bottom: 12px;
-  width: 268px;
+/* ------------------------------------------------------------------- palette */
+
+.palette { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+
+.tool {
+  padding: 7px 5px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
 }
 
-.panel--schedule h2 {
-  margin: 0 0 8px;
+.tool:hover:not(:disabled) { background: #fff; border-color: var(--accent); }
+.tool:disabled { opacity: 0.4; cursor: not-allowed; }
+.tool--active { color: #fff; background: var(--accent); border-color: transparent; font-weight: 650; }
+
+/* ---------------------------------------------------------------- properties */
+
+.prop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.prop-head h3 { margin: 0; font-size: 13px; font-weight: 650; }
+
+.prop-grid {
+  display: grid;
+  grid-template-columns: 1fr 82px;
+  align-items: center;
+  gap: 5px 8px;
+}
+
+.prop-label { font-size: 11.5px; color: var(--dim); }
+
+.prop-grid input {
+  width: 100%;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.prop-grid input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* --------------------------------------------------------------- section tab */
+
+.seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+
+.seg-btn {
+  flex: 1;
+  padding: 5px 6px;
+  font: inherit;
   font-size: 11px;
-  letter-spacing: 0.08em;
+  color: var(--dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.seg-btn--on { color: #fff; background: var(--accent); font-weight: 650; }
+
+.band-list { display: flex; flex-direction: column; gap: 4px; }
+
+.band-row { display: flex; align-items: center; gap: 4px; }
+
+.band-row select,
+.band-row input {
+  padding: 4px 5px;
+  font: inherit;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  min-width: 0;
+}
+
+.band-row select { flex: 1 1 auto; }
+.band-row input { flex: 0 0 52px; font-variant-numeric: tabular-nums; }
+.band-spacer { flex: 0 0 52px; }
+
+/* ------------------------------------------------------------------- summary */
+
+.panel--summary {
+  right: 286px;
+  bottom: 12px;
+  width: 250px;
+  padding: 11px 13px;
+}
+
+.panel--summary h2 {
+  margin: 0 0 7px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--dim);
   font-weight: 700;
 }
 
-.panel--schedule table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  margin-bottom: 10px;
-}
+.panel--summary table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
 
-.panel--schedule th,
-.panel--schedule td {
-  padding: 4px 0;
-  text-align: left;
-  border-bottom: 1px solid var(--line);
-}
+.panel--summary th,
+.panel--summary td { padding: 3px 0; text-align: left; border-bottom: 1px solid var(--line); }
 
-.panel--schedule thead th {
-  font-size: 10px;
+.panel--summary thead th {
+  font-size: 9.5px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   color: var(--dim);
 }
 
-.panel--schedule tbody th {
-  font-weight: 450;
-}
+.panel--summary tbody th { font-weight: 450; }
+.panel--summary td { text-align: right; font-variant-numeric: tabular-nums; }
+.panel--summary td:last-child { font-weight: 650; color: var(--accent); }
 
-.panel--schedule td { text-align: right; font-variant-numeric: tabular-nums; }
-.panel--schedule td:last-child { font-weight: 650; color: var(--accent); }
+/* ------------------------------------------------------------------ readout */
 
 .panel--readout {
-  left: 12px;
-  /* Clear of the Cesium credit line, which has to stay visible. */
+  left: 286px;
   bottom: 34px;
-  padding: 7px 12px;
+  padding: 6px 11px;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
 }
@@ -195,6 +291,23 @@ kbd {
   letter-spacing: 0.08em;
   color: var(--dim);
   margin-right: 8px;
+}
+
+/* ------------------------------------------------------------------- notices */
+
+.prompt {
+  position: absolute;
+  z-index: 30;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 15px;
+  font-size: 12px;
+  font-weight: 550;
+  color: #fff;
+  background: rgba(18, 21, 26, 0.9);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
 }
 
 .fatal {
@@ -210,67 +323,35 @@ kbd {
   box-shadow: var(--shadow);
 }
 
-/* Cesium's own credit line must stay legible: it is an attribution requirement
-   for the photorealistic tiles, not decoration. */
-.cesium-widget-credits {
-  color: rgba(255, 255, 255, 0.85) !important;
-  font-size: 10px !important;
-}
-
-@media (max-width: 720px) {
-  .panel--head { max-width: calc(100% - 24px); }
-  .panel--schedule { display: none; }
-}
-
-/* When the context is off, the status block carries the fix, so it needs room
-   to be read rather than glanced at. */
-.status strong {
-  display: block;
-  font-weight: 650;
-}
-
-.status-fix {
-  display: block;
-  margin-top: 4px;
-  color: var(--dim);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-/* Token entry, shown in the status panel when the context cannot load for a reason
-   the person at the keyboard can actually fix. */
-.token-form {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
+.token-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 
 .token-form input {
   width: 100%;
   padding: 6px 8px;
   font: inherit;
   font-size: 11px;
-  color: var(--ink);
-  background: #fff;
   border: 1px solid var(--line);
   border-radius: 5px;
+  background: #fff;
 }
 
-.token-form input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.token-message:not(:empty) { color: var(--warn); font-size: 11px; line-height: 1.45; }
+
+/* Cesium's credit line is an attribution requirement, not decoration, so it is moved
+   clear of the left panel rather than allowed to sit underneath it. */
+.cesium-widget-credits {
+  /* Cesium lays this out statically, so it has to be positioned before left/bottom
+     mean anything — without this it sits underneath the left panel. */
+  position: absolute !important;
+  left: 286px !important;
+  right: 286px !important;
+  bottom: 4px !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+  font-size: 10px !important;
 }
 
-.token-message:not(:empty) {
-  display: block;
-  color: var(--warn);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.btn--quiet {
-  color: var(--dim);
-  background: transparent;
-  border-style: dashed;
+@media (max-width: 900px) {
+  .panel--summary { display: none; }
+  .panel--readout { left: 12px; }
+  .cesium-widget-credits { left: 12px !important; right: 12px !important; }
 }

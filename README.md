@@ -49,6 +49,11 @@ CesiumJS is vendored locally rather than loaded from a CDN, because corporate ne
 commonly block public CDNs and because it means the application works with no network at
 all except for the streamed tiles.
 
+It is **not committed** to the repository — it is 23 MB of third-party build output — so
+`app/vendor/cesium/` is empty in a fresh clone and the setup step has to be run once per
+copy of the project. If it is missing, the application says so and names the command
+rather than failing with a console error.
+
 It has to be served over HTTP. Opening `index.html` from the filesystem will not work:
 browsers block ES modules and Cesium's workers over `file://`.
 

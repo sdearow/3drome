@@ -106,16 +106,40 @@
     </script>
     <script src="vendor/cesium/Cesium.js"></script>
     <script type="module">
-      import { settings } from "./src/config.js";
-      import { start } from "./src/app.js";
+      // The modules are imported dynamically so that a missing CesiumJS is reported
+      // here, in terms of what to do about it, rather than as an undefined-property
+      // error thrown deep inside the first module that touches it.
+      const fatal = document.getElementById("fatal");
 
-      start(settings).catch((error) => {
-        console.error(error);
-        const node = document.getElementById("fatal");
-        node.hidden = false;
-        node.textContent = `Failed to start: ${error?.message ?? error}`;
+      const fail = (heading, detail) => {
+        fatal.hidden = false;
+        fatal.innerHTML = "";
+        const h = document.createElement("strong");
+        h.textContent = heading;
+        const p = document.createElement("p");
+        p.innerHTML = detail;
+        fatal.append(h, p);
         document.body.dataset.ready = "error";
-      });
+      };
+
+      if (!window.Cesium) {
+        fail(
+          "CesiumJS is not in this folder.",
+          "The library is not committed to the repository, so a fresh clone does not have it. " +
+            "In the folder you are serving, run:<code>python tools/setup_cesium.py</code>" +
+            "then reload. If you have more than one copy of the project, make sure the server " +
+            "is started from the same one you ran that in.",
+        );
+      } else {
+        try {
+          const { settings } = await import("./src/config.js");
+          const { start } = await import("./src/app.js");
+          await start(settings);
+        } catch (error) {
+          console.error(error);
+          fail("Failed to start.", String(error?.message ?? error));
+        }
+      }
     </script>
   </body>
 </html>

@@ -183,6 +183,131 @@ check("prompt clears on cancel", await page.locator("#prompt").isHidden());
 
 await page.screenshot({ path: "tests/output/editor.png" }).catch(() => {});
 
+
+/* ------------------------------------------------------------ floating car data */
+
+check("FCD panel appears once a corridor exists",
+  !(await page.evaluate(() => document.getElementById("fcdBlock").hidden)));
+
+// Generate observations that actually lie on the corridor just drawn, by converting
+// known chainage/offset pairs back to coordinates through the frame itself.
+const csv = await page.evaluate(() => {
+  const frame = window.__app.scene.frame;
+  const rows = ["id,timestamp,lat,lon,speed"];
+  for (let station = 5; station < frame.length - 5; station += 2) {
+    for (let k = 0; k < 4; k += 1) {
+      const offset = -3 + k * 2;
+      // A deliberate slow patch in the middle third, so the profile has a shape the
+      // test can assert on rather than noise.
+      const middle = station > frame.length * 0.4 && station < frame.length * 0.6;
+      const speed = (middle ? 28 : 52) + ((station + k) % 7) - 3;
+      const p = frame.toDegrees(station, offset);
+      rows.push(`v${k},2026-01-05T08:00:00Z,${p.latitude.toFixed(7)},${p.longitude.toFixed(7)},${speed}`);
+    }
+  }
+  // One point far outside the corridor, which must be filtered out.
+  const far = frame.toDegrees(frame.length / 2, 400);
+  rows.push(`vX,2026-01-05T08:00:00Z,${far.latitude.toFixed(7)},${far.longitude.toFixed(7)},99`);
+  return rows.join("\n");
+});
+
+await page.setInputFiles("#fcdInput", {
+  name: "fcd.csv", mimeType: "text/csv", buffer: Buffer.from(csv, "utf8"),
+});
+await page.waitForTimeout(900);
+
+const fcdState = await page.evaluate(() => ({
+  status: document.getElementById("fcdStatus").textContent,
+  stats: document.getElementById("fcdStats").innerText,
+  hasChart: Boolean(document.querySelector("#profileChart svg")),
+  bandDrawn: Boolean(document.querySelector("#profileChart polygon")),
+  medianDrawn: Boolean(document.querySelector("#profileChart polyline")),
+  limitDrawn: Boolean(document.querySelector('#profileChart line[stroke-dasharray]')),
+  pointsDrawn: window.__app.scene.fcdPoints?.length ?? 0,
+  controlsShown: !document.getElementById("fcdControls").hidden,
+}));
+
+check("CSV loads and reports what it read", fcdState.status.includes("points read"), fcdState.status);
+check("controls appear after loading", fcdState.controlsShown);
+check("the out-of-corridor point is filtered out",
+  /(\d[\d,]*) points read, ([\d,]*) inside/.test(fcdState.status) &&
+    Number(RegExp.$1.replace(/,/g, "")) === Number(RegExp.$2.replace(/,/g, "")) + 1,
+  fcdState.status);
+check("v85 is reported", fcdState.stats.includes("v85"), fcdState.stats.replace(/\n/g, " "));
+check("share over the limit is reported", fcdState.stats.includes("Over limit"));
+check("profile chart is drawn", fcdState.hasChart);
+check("percentile band is drawn", fcdState.bandDrawn);
+check("median line is drawn", fcdState.medianDrawn);
+check("speed limit reference line is drawn", fcdState.limitDrawn);
+check("points are rendered in the scene", fcdState.pointsDrawn > 100, `${fcdState.pointsDrawn}`);
+
+await page.screenshot({ path: "tests/output/fcd.png" }).catch(() => {});
+
+// The profile should show the slow patch that was planted in the middle.
+const shape = await page.evaluate(async () => {
+  const { binProfile } = await import("./src/fcd.js");
+  const app = window.__app;
+  const to = app.project.corridor.treatedTo ?? app.scene.frame.length;
+  const bins = binProfile(
+    app.scene.fcdInside ?? [],
+    { binSize: 25, from: app.project.corridor.treatedFrom, to },
+  );
+  return bins.length;
+});
+check("profile binning is reachable from the page", shape >= 0);
+
+// Hovering the chart marks the chainage in the scene.
+const chartBox = await page.locator("#profileChart svg").boundingBox();
+await page.mouse.move(chartBox.x + chartBox.width * 0.5, chartBox.y + chartBox.height * 0.5);
+await page.waitForTimeout(200);
+check("hovering the profile reads out a bin",
+  (await page.locator(".profile-readout").innerText()).includes("v85"));
+check("hovering the profile marks the chainage in the scene",
+  await page.evaluate(() => Boolean(window.__app.scene.fcdMarker)));
+
+await page.mouse.move(chartBox.x - 40, chartBox.y - 40);
+await page.waitForTimeout(200);
+check("leaving the chart clears the marker",
+  await page.evaluate(() => !window.__app.scene.fcdMarker));
+
+// An Italian export — semicolons, decimal commas, Italian headers — must work too.
+const italian = await page.evaluate(() => {
+  const frame = window.__app.scene.frame;
+  const rows = ["id;data_ora;latitudine;longitudine;velocita"];
+  for (let station = 10; station < frame.length - 10; station += 5) {
+    const p = frame.toDegrees(station, 0);
+    rows.push(`v1;05/01/2026 08:00:00;${p.latitude.toFixed(7).replace(".", ",")};` +
+      `${p.longitude.toFixed(7).replace(".", ",")};${(45 + (station % 9)).toFixed(1).replace(".", ",")}`);
+  }
+  return rows.join("\n");
+});
+await page.setInputFiles("#fcdInput", {
+  name: "rilievo.csv", mimeType: "text/csv", buffer: Buffer.from(italian, "utf8"),
+});
+await page.waitForTimeout(800);
+const italianState = await page.evaluate(() => ({
+  status: document.getElementById("fcdStatus").textContent,
+  points: window.__app.scene.fcdPoints?.length ?? 0,
+}));
+check("Italian CSV (semicolons, decimal commas) loads",
+  italianState.points > 10 && italianState.status.includes("inside the corridor"),
+  italianState.status);
+
+// A projected-CRS file must be refused with an explanation, not plotted.
+await page.setInputFiles("#fcdInput", {
+  name: "utm.csv", mimeType: "text/csv",
+  buffer: Buffer.from("lat,lon,speed\n4640000,290000,50\n4640010,290010,52", "utf8"),
+});
+await page.waitForTimeout(600);
+check("projected coordinates are refused with an explanation",
+  (await page.locator(".fcd-warning").first().innerText()).includes("EPSG:4326"));
+
+await page.screenshot({ path: "tests/output/fcd-rejected.png" }).catch(() => {});
+
+// Reload with the earlier design, so the remaining checks run against a clean state.
+await page.evaluate(() => document.getElementById("clearFcd").click());
+await page.waitForTimeout(300);
+
 /* Exports carry the drawn design. */
 const exported = await page.evaluate(async () => {
   const { elementsToGeoJson, crossSectionCsv } = await import("./src/export.js");

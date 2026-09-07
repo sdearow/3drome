@@ -45,6 +45,33 @@
         <button id="copySection" type="button" class="btn btn--small">Copy existing to proposed</button>
       </section>
 
+      <section class="block" id="fcdBlock" hidden>
+        <h2>Floating car data</h2>
+        <div class="btn-row">
+          <button id="loadFcd" type="button" class="btn btn--small">Load file</button>
+          <button id="clearFcd" type="button" class="btn btn--small btn--quiet" hidden>Clear</button>
+        </div>
+        <input id="fcdInput" type="file" accept=".csv,.txt,.tsv,.json,.geojson" hidden />
+        <p id="fcdStatus" class="muted">CSV or GeoJSON with latitude, longitude and speed.</p>
+
+        <div id="fcdControls" hidden>
+          <div class="prop-grid">
+            <label class="prop-label" for="speedLimit">Speed limit</label>
+            <input id="speedLimit" type="number" step="5" min="0" />
+            <label class="prop-label" for="binSize">Bin size (m)</label>
+            <input id="binSize" type="number" step="5" min="5" />
+          </div>
+          <div class="seg" role="group" aria-label="Speed units">
+            <button id="unitKmh" type="button" class="seg-btn seg-btn--on">km/h</button>
+            <button id="unitMs" type="button" class="seg-btn">m/s</button>
+          </div>
+          <div class="btn-row">
+            <button id="toggleFcd" type="button" class="btn btn--small">Points: on</button>
+            <button id="exportProfile" type="button" class="btn btn--small">Profile CSV</button>
+          </div>
+        </div>
+      </section>
+
       <section class="block">
         <h2>Project</h2>
         <div class="btn-row">
@@ -81,16 +108,24 @@
         <h2>Properties</h2>
         <div id="properties"></div>
       </section>
+
+      <section class="block">
+        <h2>What changes</h2>
+        <table class="summary">
+          <thead>
+            <tr><th scope="col">Item</th><th scope="col">Existing</th><th scope="col">Proposed</th></tr>
+          </thead>
+          <tbody id="summaryBody"></tbody>
+        </table>
+      </section>
     </aside>
 
-    <section class="panel panel--summary" aria-label="What changes">
-      <h2>What changes</h2>
-      <table>
-        <thead>
-          <tr><th scope="col">Item</th><th scope="col">Existing</th><th scope="col">Proposed</th></tr>
-        </thead>
-        <tbody id="summaryBody"></tbody>
-      </table>
+    <section class="panel panel--profile" id="profilePanel" aria-label="Speed profile" hidden>
+      <header class="profile-head">
+        <h2>Speed along the corridor</h2>
+        <dl id="fcdStats" class="stats"></dl>
+      </header>
+      <div id="profileChart" class="profile"></div>
     </section>
 
     <footer class="panel panel--readout">

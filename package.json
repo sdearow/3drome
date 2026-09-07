@@ -7,7 +7,7 @@
   "scripts": {
     "setup": "node tools/setup_cesium.mjs",
     "start": "python3 tools/serve.py",
-    "test": "node tests/smoke.mjs"
+    "test": "node tests/fcd.mjs && node tests/smoke.mjs"
   },
   "dependencies": {
     "cesium": "^1.145.0"

@@ -250,6 +250,74 @@ export class Scene {
     return picked?.id?.properties?.elementId?.getValue?.() ?? null;
   }
 
+
+  /* ---------------------------------------------------------------------- fcd */
+
+  /**
+   * Draw floating car data as points on the corridor.
+   *
+   * Colour is diverging around the speed limit rather than a plain magnitude ramp:
+   * in a safety context the question is not how fast, it is how fast relative to what
+   * is posted, and that is a polarity with a meaningful midpoint. Below the limit
+   * reads cool, above it reads warm, and at it the colour falls away to neutral.
+   *
+   * Points are drawn as a primitive collection rather than entities — entities cost
+   * far too much per item at these counts.
+   */
+  showFcd(points, { limit, spread = 20 }) {
+    this.clearFcd();
+    if (!this.frame || points.length === 0) return;
+
+    const collection = this.viewer.scene.primitives.add(new C.PointPrimitiveCollection());
+    for (const point of points) {
+      collection.add({
+        position: this.frame.toCartesian(point.station, point.offset, 1.2),
+        color: speedColor(point.speed, limit, spread),
+        pixelSize: 5,
+        outlineWidth: 0,
+      });
+    }
+    this.fcdPoints = collection;
+  }
+
+  clearFcd() {
+    if (this.fcdPoints) {
+      this.viewer.scene.primitives.remove(this.fcdPoints);
+      this.fcdPoints = null;
+    }
+    this.clearFcdMarker();
+  }
+
+  setFcdVisible(visible) {
+    if (this.fcdPoints) this.fcdPoints.show = visible;
+  }
+
+  /** Mark the chainage the profile chart is hovering, so the two views are linked. */
+  markChainage(station) {
+    this.clearFcdMarker();
+    if (station === null || !this.frame) return;
+
+    const halfWidth = this.project?.corridor?.halfWidth ?? 20;
+    this.fcdMarker = this.overlay.entities.add({
+      polyline: {
+        positions: [
+          this.frame.toCartesian(station, -halfWidth, 1),
+          this.frame.toCartesian(station, halfWidth, 1),
+        ],
+        width: 4,
+        material: C.Color.fromCssColorString("#2a78d6"),
+        depthFailMaterial: C.Color.fromCssColorString("#2a78d6").withAlpha(0.6),
+      },
+    });
+  }
+
+  clearFcdMarker() {
+    if (this.fcdMarker) {
+      this.overlay.entities.remove(this.fcdMarker);
+      this.fcdMarker = null;
+    }
+  }
+
   /* ------------------------------------------------------------------ controls */
 
   _setDaylight(which) {
@@ -317,6 +385,36 @@ export class Scene {
     const point = this.pickGround(windowPosition);
     return point ? this.frame.fromCartesian(point) : null;
   }
+}
+
+/**
+ * Diverging colour around the speed limit: cool below, neutral at, warm above.
+ *
+ * A plain magnitude ramp would answer "how fast", but the question a safety case
+ * asks is "how fast relative to what is posted" — a polarity with a meaningful
+ * midpoint, which is what diverging encoding is for. `spread` is how far from the
+ * limit, in the data's own units, the ramp reaches full saturation.
+ */
+function speedColor(speed, limit, spread) {
+  if (speed === undefined || speed === null || Number.isNaN(speed)) {
+    return C.Color.fromCssColorString("#898781").withAlpha(0.75);
+  }
+  if (!limit) {
+    // With no limit to compare against, fall back to a single-hue magnitude ramp.
+    const t = Math.min(1, Math.max(0, speed / (spread * 3)));
+    return C.Color.lerp(
+      C.Color.fromCssColorString("#cde2fb"),
+      C.Color.fromCssColorString("#0d366b"),
+      t,
+      new C.Color(),
+    );
+  }
+  const t = Math.max(-1, Math.min(1, (speed - limit) / spread));
+  const neutral = C.Color.fromCssColorString("#b9b6ae");
+  const pole = t >= 0
+    ? C.Color.fromCssColorString("#d03b3b")
+    : C.Color.fromCssColorString("#2a78d6");
+  return C.Color.lerp(neutral, pole, Math.abs(t), new C.Color()).withAlpha(0.95);
 }
 
 export default Scene;

@@ -243,43 +243,68 @@ kbd {
 
 /* ------------------------------------------------------------------- summary */
 
-.panel--summary {
-  right: 286px;
-  bottom: 12px;
-  width: 250px;
-  padding: 11px 13px;
+.summary { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+
+.summary th,
+.summary td { padding: 3px 0; text-align: left; border-bottom: 1px solid var(--line); }
+
+.summary thead th {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  font-weight: 700;
 }
 
-.panel--summary h2 {
-  margin: 0 0 7px;
+.summary tbody th { font-weight: 450; }
+.summary td { text-align: right; font-variant-numeric: tabular-nums; }
+.summary td:last-child { font-weight: 650; color: var(--accent); }
+
+/* --------------------------------------------------------------- profile panel */
+
+/* The profile is the analytical view, so it gets the width of the scene rather than
+   a column in a side panel — and it sits above the credit line, not over it. */
+.panel--profile {
+  left: 286px;
+  right: 286px;
+  bottom: 26px;
+  padding: 10px 14px 12px;
+}
+
+.profile-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+
+.profile-head h2 {
+  margin: 0;
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--dim);
   font-weight: 700;
+  white-space: nowrap;
 }
 
-.panel--summary table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
-
-.panel--summary th,
-.panel--summary td { padding: 3px 0; text-align: left; border-bottom: 1px solid var(--line); }
-
-.panel--summary thead th {
-  font-size: 9.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--dim);
+.profile-head .stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 0;
+  align-items: baseline;
 }
 
-.panel--summary tbody th { font-weight: 450; }
-.panel--summary td { text-align: right; font-variant-numeric: tabular-nums; }
-.panel--summary td:last-child { font-weight: 650; color: var(--accent); }
+.profile-head .stats dt { font-size: 10px; color: var(--dim); }
+.profile-head .stats dd { margin: 0 0 0 4px; font-size: 12px; }
 
 /* ------------------------------------------------------------------ readout */
 
 .panel--readout {
   left: 286px;
-  bottom: 34px;
+  top: 12px;
   padding: 6px 11px;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
@@ -365,8 +390,46 @@ kbd {
   font-size: 10px !important;
 }
 
-@media (max-width: 900px) {
-  .panel--summary { display: none; }
-  .panel--readout { left: 12px; }
+@media (max-width: 1100px) {
+  .panel--profile { left: 12px; right: 12px; }
+  .panel--readout { display: none; }
   .cesium-widget-credits { left: 12px !important; right: 12px !important; }
+}
+
+/* ---------------------------------------------------------------- floating car data */
+
+.stats {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  margin: 2px 0 4px;
+  font-size: 11.5px;
+}
+
+.stats dt, .stats dd { white-space: nowrap; }
+
+.stats dt { color: var(--dim); }
+.stats dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.stats dd.stat--alert { color: var(--danger); }
+
+.profile { margin: 2px 0 4px; }
+.profile svg { display: block; overflow: visible; cursor: crosshair; }
+
+.profile-readout {
+  margin: 2px 0 0;
+  min-height: 15px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+}
+
+.fcd-warning {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #6b3a12;
+  background: rgba(250, 178, 25, 0.16);
+  border-left: 2px solid #fab219;
+  border-radius: 3px;
 }

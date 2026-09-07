@@ -20,6 +20,16 @@ import {
   serialise,
 } from "./project.js";
 import { clearToken, looksLikeIonToken, readStored, resolveIonToken, storeToken } from "./token.js";
+import {
+  binProfile,
+  guessSpeedUnit,
+  parseDelimited,
+  parseGeoJson,
+  projectToCorridor,
+  sampleEvenly,
+  summarise,
+} from "./fcd.js";
+import { renderProfile } from "./profile.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -30,6 +40,19 @@ export async function start(settings) {
   let project = loadLocal() ?? emptyProject();
   let editing = "proposed"; // which cross-section the editor shows
   let selectedId = null;
+
+  // Floating car data is session state, not part of the design: it describes what
+  // the road does today, and it is not something the project owns or exports.
+  const fcd = {
+    raw: [],           // every parsed point
+    inside: [],        // those falling within the corridor
+    unit: "kmh",
+    limit: 50,
+    binSize: 25,
+    visible: true,
+    warnings: [],
+    fileName: null,
+  };
 
   scene.setProject(project);
   window.__app = { scene, get project() { return project; } };
@@ -48,6 +71,8 @@ export async function start(settings) {
     if (rebuild) scene.setProject(project);
     saveLocal(project);
     refresh();
+    // The corridor decides which observations count, so any change to it re-filters.
+    if (fcd.raw.length) refreshFcd();
   }
 
   function refresh() {
@@ -56,6 +81,7 @@ export async function start(settings) {
     paintCorridor();
 
     $("sectionBlock").hidden = !project.corridor;
+    $("fcdBlock").hidden = !project.corridor;
     if (project.corridor) {
       renderSection($("sectionEditor"), project, editing, { onChange: () => commit() });
     }
@@ -272,6 +298,204 @@ export async function start(settings) {
   $("exportCsv").addEventListener("click", () => {
     download(`${slug(project.name)}-section.csv`, crossSectionCsv(project), "text/csv");
   });
+
+
+  /* --------------------------------------------------------- floating car data */
+
+  $("loadFcd").addEventListener("click", () => $("fcdInput").click());
+
+  $("fcdInput").addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    $("fcdStatus").textContent = `Reading ${file.name}…`;
+
+    try {
+      const text = await file.text();
+      const isJson = /\.(json|geojson)$/i.test(file.name) || text.trimStart().startsWith("{");
+      const result = isJson ? parseGeoJson(text) : parseDelimited(text);
+
+      fcd.raw = result.points;
+      fcd.warnings = result.warnings ?? [];
+      fcd.fileName = file.name;
+
+      const speeds = fcd.raw.map((p) => p.speed).filter((v) => v !== undefined);
+      if (speeds.length) {
+        const guess = guessSpeedUnit(speeds);
+        fcd.unit = guess.unit;
+        if (!guess.confident) {
+          fcd.warnings.push(
+            `Speed units were guessed as ${guess.unit === "ms" ? "m/s" : "km/h"} ` +
+              `from a 95th percentile of ${guess.p95.toFixed(1)}. Check the toggle.`,
+          );
+        }
+      }
+      // A limit in m/s is a different number; keep the default sensible either way.
+      fcd.limit = fcd.unit === "ms" ? 14 : 50;
+      $("fcdControls").hidden = false;
+      $("clearFcd").hidden = false;
+      $("profilePanel").hidden = false;
+      paintUnitToggle();
+      refreshFcd();
+    } catch (error) {
+      $("fcdStatus").textContent = `Could not read that file: ${error.message}`;
+    } finally {
+      event.target.value = "";
+    }
+  });
+
+  $("clearFcd").addEventListener("click", () => {
+    fcd.raw = [];
+    fcd.inside = [];
+    fcd.warnings = [];
+    fcd.fileName = null;
+    scene.clearFcd();
+    $("fcdControls").hidden = true;
+    $("clearFcd").hidden = true;
+    $("profilePanel").hidden = true;
+    $("fcdStatus").textContent = "CSV or GeoJSON with latitude, longitude and speed.";
+  });
+
+  $("speedLimit").addEventListener("change", (event) => {
+    fcd.limit = Number(event.target.value) || 0;
+    refreshFcd();
+  });
+  $("binSize").addEventListener("change", (event) => {
+    fcd.binSize = Math.max(5, Number(event.target.value) || 25);
+    refreshFcd();
+  });
+  $("unitKmh").addEventListener("click", () => setUnit("kmh"));
+  $("unitMs").addEventListener("click", () => setUnit("ms"));
+
+  $("toggleFcd").addEventListener("click", (event) => {
+    fcd.visible = !fcd.visible;
+    scene.setFcdVisible(fcd.visible);
+    event.target.textContent = fcd.visible ? "Points: on" : "Points: off";
+  });
+
+  $("exportProfile").addEventListener("click", () => {
+    const bins = currentBins();
+    const rows = [["station_m", "n", `v15_${fcd.unit}`, `v50_${fcd.unit}`, `v85_${fcd.unit}`, "sparse"]];
+    for (const bin of bins) {
+      rows.push([
+        bin.station.toFixed(1), bin.n,
+        bin.v15?.toFixed(2) ?? "", bin.v50?.toFixed(2) ?? "", bin.v85?.toFixed(2) ?? "",
+        bin.sparse ? "yes" : "",
+      ]);
+    }
+    download(`${slug(project.name)}-speed-profile.csv`, rows.map((r) => r.join(",")).join("\n"), "text/csv");
+  });
+
+  function setUnit(unit) {
+    if (fcd.unit === unit) return;
+    // Converting the limit too keeps the reference line where the user put it.
+    fcd.limit = unit === "ms" ? fcd.limit / 3.6 : fcd.limit * 3.6;
+    fcd.unit = unit;
+    paintUnitToggle();
+    refreshFcd();
+  }
+
+  function paintUnitToggle() {
+    $("unitKmh").classList.toggle("seg-btn--on", fcd.unit === "kmh");
+    $("unitMs").classList.toggle("seg-btn--on", fcd.unit === "ms");
+  }
+
+  function corridorWindow() {
+    const to = project.corridor.treatedTo ?? scene.frame.length;
+    return { from: project.corridor.treatedFrom, to, halfWidth: project.corridor.halfWidth };
+  }
+
+  function currentBins() {
+    const { from, to } = corridorWindow();
+    return binProfile(fcd.inside, { binSize: fcd.binSize, from, to });
+  }
+
+  /** Reproject, redraw and restate the data. Called on load and on every setting. */
+  function refreshFcd() {
+    if (!scene.frame || !project.corridor) return;
+
+    // A file that parsed to nothing is exactly when the warnings matter most, so
+    // report before returning rather than after.
+    if (fcd.raw.length === 0) {
+      scene.clearFcd();
+      renderProfile($("profileChart"), [], { unit: fcd.unit === "ms" ? "m/s" : "km/h" });
+      $("fcdStats").innerHTML = "<dt>Observations</dt><dd>none</dd>";
+      $("fcdStatus").textContent = fcd.fileName
+        ? `${fcd.fileName}: no usable points.`
+        : "CSV or GeoJSON with latitude, longitude and speed.";
+      renderFcdWarnings();
+      return;
+    }
+
+    const window_ = corridorWindow();
+    fcd.inside = projectToCorridor(
+      fcd.raw,
+      (lon, lat) => scene.frame.fromCartesian(window.Cesium.Cartesian3.fromDegrees(lon, lat, scene.frame.originHeight)),
+      window_,
+    );
+
+    $("speedLimit").value = round1(fcd.limit);
+    $("binSize").value = fcd.binSize;
+
+    const speeds = fcd.inside.map((p) => p.speed).filter((v) => v !== undefined);
+    const stats = summarise(speeds, fcd.limit);
+    renderFcdStats(stats);
+
+    const { sample, sampled } = sampleEvenly(fcd.inside, 40000);
+    scene.showFcd(sample, { limit: fcd.limit, spread: fcd.unit === "ms" ? 6 : 20 });
+    scene.setFcdVisible(fcd.visible);
+
+    renderProfile($("profileChart"), currentBins(), {
+      limit: fcd.limit,
+      unit: fcd.unit === "ms" ? "m/s" : "km/h",
+      onHover: (bin) => scene.markChainage(bin ? bin.station : null),
+    });
+
+    const parts = [`${fcd.raw.length.toLocaleString()} points read`];
+    parts.push(`${fcd.inside.length.toLocaleString()} inside the corridor`);
+    if (sampled) parts.push(`${sample.length.toLocaleString()} drawn`);
+    $("fcdStatus").textContent = `${fcd.fileName}: ${parts.join(", ")}.`;
+
+    renderFcdWarnings();
+  }
+
+  function renderFcdStats(stats) {
+    const list = $("fcdStats");
+    list.innerHTML = "";
+    if (!stats.n) {
+      list.innerHTML = "<dt>Observations</dt><dd>none in corridor</dd>";
+      return;
+    }
+    const u = fcd.unit === "ms" ? "m/s" : "km/h";
+    const rows = [
+      ["Observations", stats.n.toLocaleString(), false],
+      ["Mean", `${stats.mean.toFixed(1)} ${u}`, false],
+      ["v50", `${stats.v50.toFixed(1)} ${u}`, false],
+      // v85 is the metric speed management is argued in, so it is stated plainly.
+      ["v85", `${stats.v85.toFixed(1)} ${u}`, fcd.limit > 0 && stats.v85 > fcd.limit],
+    ];
+    if (stats.overLimit !== null) {
+      rows.push(["Over limit", `${(stats.overLimit * 100).toFixed(0)}%`, stats.overLimit > 0.15]);
+    }
+    for (const [label, value, alert] of rows) {
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      if (alert) dd.className = "stat--alert";
+      list.append(dt, dd);
+    }
+  }
+
+  function renderFcdWarnings() {
+    for (const node of document.querySelectorAll(".fcd-warning")) node.remove();
+    for (const warning of fcd.warnings) {
+      const p = document.createElement("p");
+      p.className = "fcd-warning";
+      p.textContent = warning;
+      $("fcdStatus").after(p);
+    }
+  }
+
 
   /* ----------------------------------------------------------------- context */
 

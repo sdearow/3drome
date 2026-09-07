@@ -112,6 +112,41 @@ place. <kbd>Delete</kbd> removes the selection.
 The design is saved to the browser as you work and reloads with the page. **Export** writes
 a project file you can keep or send; **Open** reads one back. **Start over** clears it.
 
+## Floating car data
+
+Load a GPS dataset and it is projected onto the corridor, turning a scatter of fixes
+into a speed profile along the road — which is the form the safety argument is
+actually made in.
+
+**Load file** takes a CSV or a GeoJSON. Columns are detected by name in English or
+Italian (`lat`/`latitudine`, `lon`/`longitudine`, `speed`/`velocita`), and semicolon
+separators with decimal commas — how Italian exports usually come — are handled.
+Everything stays in the browser; nothing is uploaded.
+
+You get:
+
+- **Points in the scene**, coloured by speed *relative to the limit* rather than by
+  raw magnitude: cool below, neutral at, warm above. In a safety context the question
+  is not how fast but how fast against what is posted, which is a polarity with a
+  meaningful midpoint.
+- **A speed profile** along chainage — median with the 15th-to-85th percentile band,
+  and the limit as a labelled reference line. Hovering a bin marks that chainage in
+  the 3D view, so the dip in the line and the place it happens are the same gesture.
+- **v85 and the share over the limit**, the metrics speed management is argued in.
+- **Profile CSV** export, binned, for a report or a spreadsheet.
+
+Only points inside the intervention zone are counted, so narrowing the corridor or
+moving the treated window re-filters the data immediately.
+
+Two things it will refuse rather than guess at. **Projected coordinates** — if the
+values are outside the range of degrees, it says so and names the likely CRS instead
+of plotting the file into the ocean; reproject to EPSG:4326 first. And **speed
+units** are guessed from the distribution and stated, with a toggle, because getting
+m/s and km/h the wrong way round scales every figure by 3.6.
+
+Bins resting on very few observations are ringed on the chart, so a dip that is
+really three vehicles at a junction is visible as such rather than read as a finding.
+
 ## Getting the numbers out
 
 **GeoJSON** gives the corridor axis and every element as features carrying their chainage,
@@ -143,7 +178,8 @@ dimensioned and reviewed in. `EPSG:4326` appears only in the GeoJSON export.
 ## Tests
 
 ```bash
-node tests/smoke.mjs
+node tests/fcd.mjs      # parsing, percentiles, corridor projection — no browser
+node tests/smoke.mjs    # the editor, driven headless
 ```
 
 Drives the editor the way a person does — draws an axis, edits the section, places a point

@@ -17,18 +17,30 @@ what is verified versus assumed.
 
 ## Running it
 
+Needs Python. Nothing else, and nothing that requires admin rights.
+
 ```bash
-node tools/setup_cesium.mjs     # vendors CesiumJS into app/vendor/cesium
+python tools/setup_cesium.py     # downloads CesiumJS into app/vendor/cesium
 python -m http.server 8000 -d app
 ```
 
-Then open <http://localhost:8000>.
+Then open <http://localhost:8000>. Use `python3` instead of `python` on Linux and macOS.
+
+The setup step is a one-off download of about 130 MB, which unpacks to 23 MB. There is a
+Node equivalent, `node tools/setup_cesium.mjs`, if you would rather use it — the result
+is identical.
+
+If both fail — a proxy, an intercepted certificate, antivirus eating the temporary file —
+the manual route always works: download the
+[CesiumJS release ZIP](https://github.com/CesiumGS/cesium/releases), unzip it, and copy
+the `Build/Cesium` folder from inside it to `app/vendor/cesium`.
 
 CesiumJS is vendored locally rather than loaded from a CDN, because corporate networks
 commonly block public CDNs and because it means the application works with no network at
-all except for the streamed tiles. If `npm` is unavailable, download the CesiumJS release
-ZIP from [the GitHub releases page](https://github.com/CesiumGS/cesium/releases), unzip
-it, and copy its `Build/Cesium` directory to `app/vendor/cesium`. Nothing else differs.
+all except for the streamed tiles.
+
+It has to be served over HTTP. Opening `index.html` from the filesystem will not work:
+browsers block ES modules and Cesium's workers over `file://`.
 
 ### Photorealistic context
 
@@ -98,6 +110,10 @@ Runs the application headless and checks that the scene builds, the corridor lan
 Rome, station/offset round-trips to within a millimetre, the cross-sections tile, the
 headline figures are the intended ones, and the toggles and exports work. It writes
 screenshots to `tests/output/`.
+
+This is the one part that needs Node, and it is optional — the application itself does
+not. On a machine without Node, check a config change by reloading the page and reading
+the console: the cross-section validator reports gaps and overlaps there too.
 
 If Playwright's bundled browser is missing, point it at an existing one:
 
